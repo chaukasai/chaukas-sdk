@@ -10,9 +10,11 @@ from crewai import Agent, Task, Crew, Process
 from chaukas import sdk as chaukas
 
 # Set environment variables
-os.environ["CHAUKAS_ENDPOINT"] = "https://api.chaukas.com"
-os.environ["CHAUKAS_API_KEY"] = "your-api-key-here"
-os.environ["OPENAI_API_KEY"] = "your-openai-api-key"
+os.environ["CHAUKAS_TENANT_ID"] = "test_tenant_1"
+os.environ["CHAUKAS_PROJECT_ID"] = "tets_project_1"
+os.environ["CHAUKAS_OUTPUT_MODE"] = "file"
+os.environ["CHAUKAS_OUTPUT_FILE"] = "crewai_output.jsonl"
+#os.environ["OPENAI_API_KEY"] = "your-openai-api-key"
 
 # Enable instrumentation - this will automatically detect and patch CrewAI
 chaukas.enable_chaukas()
@@ -56,7 +58,7 @@ def main():
     crew = Crew(
         agents=[researcher, writer],
         tasks=[task1, task2],
-        verbose=2,
+        verbose=True,
         process=Process.sequential
     )
     

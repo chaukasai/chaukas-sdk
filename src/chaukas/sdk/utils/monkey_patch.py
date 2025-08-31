@@ -127,21 +127,9 @@ class MonkeyPatcher:
         from chaukas.sdk.integrations.crewai import CrewAIWrapper
         wrapper = CrewAIWrapper(self.tracer)
         
-        # Patch Crew.kickoff
-        self._add_patch(
-            "crewai",
-            "Crew",
-            "kickoff", 
-            wrapper.wrap_crew_kickoff,
-        )
-        
-        # Patch Agent.execute_task
-        self._add_patch(
-            "crewai",
-            "Agent",
-            "execute_task",
-            wrapper.wrap_agent_execute_task,
-        )
+        # Apply direct patches
+        wrapper.patch_crew()
+        wrapper.patch_agent()
     
     def _add_patch(
         self,
