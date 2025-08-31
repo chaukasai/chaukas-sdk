@@ -1,18 +1,24 @@
 """
-Tests for Chaukas client functionality.
+Tests for Chaukas client functionality with proto compliance.
 """
 
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timezone
+import os
 
-from chaukas.core.client import ChaukasClient, ChaukasEvent
+from chaukas.core.client import ChaukasClient
+from chaukas.core.config import ChaukasConfig
+from chaukas.core.event_builder import EventBuilder
 
 
 @pytest.fixture
-def client():
-    return ChaukasClient(
+def config():
+    """Create test configuration."""
+    return ChaukasConfig(
+        tenant_id="test-tenant",
+        project_id="test-project",
         endpoint="https://test.chaukas.com",
         api_key="test-key",
         batch_size=2,
@@ -21,55 +27,56 @@ def client():
 
 
 @pytest.fixture
-def sample_event():
-    return ChaukasEvent(
-        event_id="test-event-id",
-        session_id="test-session",
-        trace_id="test-trace",
-        span_id="test-span",
-        parent_span_id="test-parent-span",
-        timestamp=datetime.now(timezone.utc),
-        event_type="test.event",
-        source="test",
-        data={"key": "value"},
-        metadata={"meta": "data"},
+def client(config):
+    """Create test client with config."""
+    return ChaukasClient(config=config)
+
+
+@pytest.fixture
+def event_builder():
+    """Create event builder with test config."""
+    # Set environment variables for config
+    os.environ["CHAUKAS_TENANT_ID"] = "test-tenant"
+    os.environ["CHAUKAS_PROJECT_ID"] = "test-project"
+    os.environ["CHAUKAS_ENDPOINT"] = "https://test.chaukas.com"
+    os.environ["CHAUKAS_API_KEY"] = "test-key"
+    return EventBuilder()
+
+
+@pytest.fixture
+def sample_event(event_builder):
+    """Create a sample proto event."""
+    return event_builder.create_agent_start(
+        agent_id="test-agent",
+        agent_name="Test Agent",
+        role="assistant",
+        instructions="Test instructions",
     )
 
 
 @pytest.mark.asyncio
 async def test_client_initialization(client):
-    """Test client initialization."""
+    """Test client initialization with config."""
     assert client.endpoint == "https://test.chaukas.com"
     assert client.api_key == "test-key"
     assert client.batch_size == 2
-    assert client._events_queue == []
+    assert client.flush_interval == 1.0
+    assert len(client._events_queue) == 0
     assert not client._closed
 
 
 @pytest.mark.asyncio
-async def test_create_event(client):
-    """Test event creation."""
-    event = client.create_event(
-        event_type="test.event",
-        source="test",
-        data={"key": "value"},
-        session_id="session-123",
-        trace_id="trace-123",
-        span_id="span-123",
-        parent_span_id="parent-123",
-        metadata={"meta": "data"},
-    )
+async def test_create_event_builder(client):
+    """Test event builder creation from client."""
+    builder = client.create_event_builder()
+    assert builder is not None
     
-    assert event.event_type == "test.event"
-    assert event.source == "test"
-    assert event.data == {"key": "value"}
-    assert event.session_id == "session-123"
-    assert event.trace_id == "trace-123"
-    assert event.span_id == "span-123"
-    assert event.parent_span_id == "parent-123"
-    assert event.metadata == {"meta": "data"}
+    # Test creating an event with the builder
+    event = builder.create_session_start()
+    assert event.tenant_id == "test-tenant"
+    assert event.project_id == "test-project"
     assert event.event_id is not None
-    assert event.timestamp is not None
+    assert event.session_id is not None
 
 
 @pytest.mark.asyncio
@@ -93,15 +100,14 @@ async def test_send_events_batch(client, sample_event):
     
     with patch.object(client, "_flush_events", new_callable=AsyncMock) as mock_flush:
         await client.send_events(events)
-        # Should trigger flush due to batch_size=2
+        # Should trigger flush due to batch_size=2 being exceeded
         mock_flush.assert_called_once()
-        assert len(client._events_queue) == 1  # One event remaining after flush
 
 
 @pytest.mark.asyncio
-async def test_flush_events_success(client, sample_event):
-    """Test successful event flushing."""
-    client._events_queue = [sample_event, sample_event]
+async def test_flush_single_event(client, sample_event):
+    """Test flushing a single event."""
+    client._events_queue = [sample_event]
     
     with patch.object(client._client, "post", new_callable=AsyncMock) as mock_post:
         mock_response = MagicMock()
@@ -112,16 +118,38 @@ async def test_flush_events_success(client, sample_event):
         
         mock_post.assert_called_once()
         call_args = mock_post.call_args
-        assert call_args[0][0] == "https://test.chaukas.com/events"
-        assert "events" in call_args[1]["json"]
-        assert len(call_args[1]["json"]["events"]) == 2
+        assert "/v1/events/ingest" in call_args[0][0]
+        assert client._events_queue == []
+
+
+@pytest.mark.asyncio
+async def test_flush_batch_events(client, event_builder):
+    """Test flushing multiple events as batch."""
+    events = [
+        event_builder.create_agent_start("agent1", "Agent 1"),
+        event_builder.create_agent_end("agent1", "Agent 1"),
+        event_builder.create_session_end(),
+    ]
+    client._events_queue = events
+    
+    with patch.object(client._client, "post", new_callable=AsyncMock) as mock_post:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_post.return_value = mock_response
+        
+        await client._flush_events()
+        
+        mock_post.assert_called_once()
+        call_args = mock_post.call_args
+        assert "/v1/events/ingest-batch" in call_args[0][0]
         assert client._events_queue == []
 
 
 @pytest.mark.asyncio
 async def test_flush_events_failure(client, sample_event):
     """Test event flushing failure and re-queuing."""
-    client._events_queue = [sample_event]
+    original_events = [sample_event]
+    client._events_queue = original_events.copy()
     
     with patch.object(client._client, "post", new_callable=AsyncMock) as mock_post:
         mock_post.side_effect = Exception("Network error")
@@ -130,6 +158,19 @@ async def test_flush_events_failure(client, sample_event):
         
         # Events should be re-queued on failure
         assert len(client._events_queue) == 1
+
+
+@pytest.mark.asyncio
+async def test_event_wrapper_support(client):
+    """Test that client accepts EventWrapper."""
+    wrapper = client.create_event_wrapper()
+    wrapper.with_message("user", "Hello")
+    
+    with patch.object(client, "_flush_events", new_callable=AsyncMock):
+        await client.send_event(wrapper)
+        assert len(client._events_queue) == 1
+        # Should have converted wrapper to proto
+        assert hasattr(client._events_queue[0], "SerializeToString")
 
 
 @pytest.mark.asyncio
@@ -147,10 +188,29 @@ async def test_client_close(client, sample_event):
 
 
 @pytest.mark.asyncio
-async def test_client_context_manager(sample_event):
+async def test_client_context_manager():
     """Test client as async context manager."""
-    async with ChaukasClient("https://test.com", "key") as client:
+    config = ChaukasConfig(
+        tenant_id="test",
+        project_id="test",
+        endpoint="https://test.com",
+        api_key="key"
+    )
+    
+    async with ChaukasClient(config=config) as client:
         assert not client._closed
-        await client.send_event(sample_event)
+        builder = client.create_event_builder()
+        event = builder.create_session_start()
+        await client.send_event(event)
     
     assert client._closed
+
+
+@pytest.mark.asyncio
+async def test_send_to_closed_client(client, sample_event):
+    """Test sending events to closed client."""
+    await client.close()
+    
+    # Should not raise but should warn
+    await client.send_event(sample_event)
+    assert len(client._events_queue) == 0  # Event not queued

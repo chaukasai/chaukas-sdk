@@ -7,7 +7,8 @@ setup(
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     author="Chaukas",
-    packages=find_packages(),
+    package_dir={'': 'src'},
+    packages=find_packages(where='src'),
     python_requires=">=3.8",
     install_requires=[
         "chaukas-spec-client>=1.0.0",
