@@ -71,7 +71,7 @@ class Span:
             self.attributes["status_description"] = description
     
     def finish(self, error: Optional[Exception] = None) -> None:
-        """Finish the span and send event."""
+        """Finish the span."""
         if self.end_time:
             return  # Already finished
         
@@ -83,30 +83,6 @@ class Span:
             self.attributes["error_type"] = type(error).__name__
         elif self.status == "active":
             self.status = "ok"
-        
-        # Create span event
-        event_data = {
-            "span_name": self.name,
-            "start_time": self.start_time.isoformat(),
-            "end_time": self.end_time.isoformat(),
-            "duration_ms": (self.end_time - self.start_time).total_seconds() * 1000,
-            "status": self.status,
-            "attributes": self.attributes,
-            "events": self.events,
-        }
-        
-        event = self.tracer.client.create_event(
-            event_type="span",
-            source="chaukas-sdk",
-            data=event_data,
-            session_id=self.session_id or "",
-            trace_id=self.trace_id,
-            span_id=self.span_id,
-            parent_span_id=self.parent_span_id,
-        )
-        
-        # Send event asynchronously
-        asyncio.create_task(self.tracer.client.send_event(event))
     
     def __enter__(self):
         # Set context variables

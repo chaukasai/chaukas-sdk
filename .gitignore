@@ -192,3 +192,6 @@ temp/
 
 # Coding assistants
 CLAUDE.md
+
+# Example output files
+*.jsonl
