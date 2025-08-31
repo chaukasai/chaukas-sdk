@@ -27,6 +27,10 @@ class ChaukasConfig:
     branch: Optional[str] = None
     tags: Optional[list] = None
     
+    # Output configuration
+    output_mode: str = "api"  # "api" or "file"
+    output_file: Optional[str] = None
+    
     @classmethod
     def from_env(cls) -> "ChaukasConfig":
         """
@@ -35,10 +39,16 @@ class ChaukasConfig:
         Required environment variables:
         - CHAUKAS_TENANT_ID
         - CHAUKAS_PROJECT_ID
+        
+        Required for API mode:
         - CHAUKAS_ENDPOINT
         - CHAUKAS_API_KEY
         
+        Required for file mode:
+        - CHAUKAS_OUTPUT_FILE
+        
         Optional environment variables:
+        - CHAUKAS_OUTPUT_MODE (default: "api", options: "api", "file")
         - CHAUKAS_BATCH_SIZE (default: 100)
         - CHAUKAS_FLUSH_INTERVAL (default: 5.0)
         - CHAUKAS_TIMEOUT (default: 30.0)
@@ -57,13 +67,27 @@ class ChaukasConfig:
         if not project_id:
             raise ValueError("CHAUKAS_PROJECT_ID environment variable is required")
         
-        endpoint = os.getenv("CHAUKAS_ENDPOINT")
-        if not endpoint:
-            raise ValueError("CHAUKAS_ENDPOINT environment variable is required")
+        # Output mode and validation
+        output_mode = os.getenv("CHAUKAS_OUTPUT_MODE", "api")
+        if output_mode not in ["api", "file"]:
+            raise ValueError("CHAUKAS_OUTPUT_MODE must be 'api' or 'file'")
         
+        output_file = os.getenv("CHAUKAS_OUTPUT_FILE")
+        endpoint = os.getenv("CHAUKAS_ENDPOINT")
         api_key = os.getenv("CHAUKAS_API_KEY")
-        if not api_key:
-            raise ValueError("CHAUKAS_API_KEY environment variable is required")
+        
+        # Validate mode-specific requirements
+        if output_mode == "api":
+            if not endpoint:
+                raise ValueError("CHAUKAS_ENDPOINT environment variable is required for API mode")
+            if not api_key:
+                raise ValueError("CHAUKAS_API_KEY environment variable is required for API mode")
+        elif output_mode == "file":
+            if not output_file:
+                raise ValueError("CHAUKAS_OUTPUT_FILE environment variable is required for file mode")
+            # Set defaults for file mode
+            endpoint = endpoint or "file://localhost"
+            api_key = api_key or "file-mode"
         
         # Optional fields
         batch_size = int(os.getenv("CHAUKAS_BATCH_SIZE", "100"))
@@ -85,6 +109,8 @@ class ChaukasConfig:
             timeout=timeout,
             branch=branch,
             tags=tags,
+            output_mode=output_mode,
+            output_file=output_file,
         )
     
     @classmethod
