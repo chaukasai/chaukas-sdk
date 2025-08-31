@@ -90,7 +90,9 @@ class ChaukasConfig:
             api_key = api_key or "file-mode"
         
         # Optional fields
-        batch_size = int(os.getenv("CHAUKAS_BATCH_SIZE", "100"))
+        # For file mode, use smaller batch size for more immediate writes
+        default_batch_size = "1" if output_mode == "file" else "100"
+        batch_size = int(os.getenv("CHAUKAS_BATCH_SIZE", default_batch_size))
         flush_interval = float(os.getenv("CHAUKAS_FLUSH_INTERVAL", "5.0"))
         timeout = float(os.getenv("CHAUKAS_TIMEOUT", "30.0"))
         
