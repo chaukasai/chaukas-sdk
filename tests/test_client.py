@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import datetime, timezone
 import os
 
-from chaukas.core.client import ChaukasClient
-from chaukas.core.config import ChaukasConfig
-from chaukas.core.event_builder import EventBuilder
+from chaukas.sdk import ChaukasClient
+from chaukas.sdk import ChaukasConfig
+from chaukas.sdk import EventBuilder
 
 
 @pytest.fixture
@@ -68,8 +68,14 @@ async def test_client_initialization(client):
 @pytest.mark.asyncio
 async def test_create_event_builder(client):
     """Test event builder creation from client."""
-    builder = client.create_event_builder()
-    assert builder is not None
+    with patch.dict('os.environ', {
+        'CHAUKAS_TENANT_ID': 'test-tenant',
+        'CHAUKAS_PROJECT_ID': 'test-project',
+        'CHAUKAS_ENDPOINT': 'https://api.example.com',
+        'CHAUKAS_API_KEY': 'test-key'
+    }):
+        builder = client.create_event_builder()
+        assert builder is not None
     
     # Test creating an event with the builder
     event = builder.create_session_start()

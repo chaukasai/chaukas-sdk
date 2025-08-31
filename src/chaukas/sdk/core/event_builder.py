@@ -16,9 +16,9 @@ from chaukas.spec.common.v1.events_pb2 import (
     AgentHandoff, MCPCall, PerformanceMetrics, CostDetails
 )
 
-from .config import get_config
-from .tracer import _session_id, _trace_id, _span_id, _parent_span_id
-from ..utils.uuid7 import generate_uuid7
+from chaukas.sdk.core.config import get_config
+from chaukas.sdk.core.tracer import _session_id, _trace_id, _span_id, _parent_span_id
+from chaukas.sdk.utils.uuid7 import generate_uuid7
 
 
 class EventBuilder:
@@ -409,7 +409,6 @@ class EventBuilder:
         
         # Create ToolResponse message
         tool_response = ToolResponse()
-        tool_response.tool_name = tool_name
         
         if call_id:
             tool_response.tool_call_id = call_id
@@ -780,16 +779,10 @@ class EventBuilder:
             elif isinstance(value, str):
                 struct[key] = value
             elif isinstance(value, dict):
-                struct_value = struct[key]
-                self._dict_to_struct(value, struct_value)
+                struct[key] = {}
+                self._dict_to_struct(value, struct[key])
             elif isinstance(value, list):
-                list_value = struct[key]
-                for item in value:
-                    if isinstance(item, dict):
-                        item_struct = list_value.add()
-                        self._dict_to_struct(item, item_struct)
-                    else:
-                        list_value.append(item)
+                struct[key] = value
             else:
                 # Convert to string for unsupported types
                 struct[key] = str(value)

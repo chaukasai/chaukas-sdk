@@ -7,8 +7,8 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 
-from chaukas.core.tracer import ChaukasTracer, Span
-from chaukas.core.client import ChaukasClient
+from chaukas.sdk.core.tracer import ChaukasTracer, Span
+from chaukas.sdk.core.client import ChaukasClient
 
 
 @pytest.fixture
@@ -32,6 +32,10 @@ def test_tracer_initialization(tracer, mock_client):
 
 def test_start_span(tracer):
     """Test span creation."""
+    # Clear any existing context from other tests
+    from chaukas.sdk.core.tracer import _session_id
+    _session_id.set(None)
+    
     span = tracer.start_span("test-span")
     
     assert span.name == "test-span"
@@ -46,7 +50,7 @@ def test_start_span(tracer):
 
 def test_span_attributes():
     """Test span attribute management."""
-    from chaukas.core.client import ChaukasClient
+    from chaukas.sdk.core.client import ChaukasClient
     
     client = MagicMock(spec=ChaukasClient)
     tracer = ChaukasTracer(client=client)
@@ -63,7 +67,7 @@ def test_span_attributes():
 
 def test_span_status():
     """Test span status management."""
-    from chaukas.core.client import ChaukasClient
+    from chaukas.sdk.core.client import ChaukasClient
     
     client = MagicMock(spec=ChaukasClient)
     tracer = ChaukasTracer(client=client)

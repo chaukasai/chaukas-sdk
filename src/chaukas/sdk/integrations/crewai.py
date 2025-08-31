@@ -10,9 +10,9 @@ from functools import wraps
 
 from chaukas.spec.common.v1.events_pb2 import EventStatus
 
-from ..core.tracer import ChaukasTracer
-from ..core.event_builder import EventBuilder
-from ..core.agent_mapper import AgentMapper
+from chaukas.sdk.core.tracer import ChaukasTracer
+from chaukas.sdk.core.event_builder import EventBuilder
+from chaukas.sdk.core.agent_mapper import AgentMapper
 
 logger = logging.getLogger(__name__)
 

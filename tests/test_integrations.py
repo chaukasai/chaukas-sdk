@@ -5,9 +5,26 @@ Tests for SDK integrations.
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from chaukas.utils.monkey_patch import MonkeyPatcher
-from chaukas.core.tracer import ChaukasTracer
-from chaukas.core.client import ChaukasClient
+from chaukas.sdk.utils.monkey_patch import MonkeyPatcher
+from chaukas.sdk.core.tracer import ChaukasTracer
+from chaukas.sdk.core.client import ChaukasClient
+from chaukas.sdk.core.config import ChaukasConfig, set_config
+
+
+@pytest.fixture(autouse=True)
+def setup_config():
+    """Set up test configuration."""
+    config = ChaukasConfig(
+        tenant_id="test-tenant",
+        project_id="test-project",
+        endpoint="https://test.chaukas.com",
+        api_key="test-key"
+    )
+    set_config(config)
+    yield
+    # Reset config after test
+    from chaukas.sdk.core.config import reset_config
+    reset_config()
 
 
 @pytest.fixture
@@ -64,13 +81,18 @@ def test_patch_detection_import_error():
 @pytest.mark.asyncio
 async def test_openai_agents_wrapper():
     """Test OpenAI Agents wrapper functionality."""
-    from chaukas.integrations.openai_agents import OpenAIAgentsWrapper
+    from chaukas.sdk.integrations.openai_agents import OpenAIAgentsWrapper
     
     mock_tracer = MagicMock(spec=ChaukasTracer)
     mock_span = MagicMock()
     mock_tracer.start_span.return_value.__enter__ = MagicMock(return_value=mock_span)
     mock_tracer.start_span.return_value.__exit__ = MagicMock(return_value=None)
     mock_tracer.send_event = AsyncMock()
+    
+    # Mock client for tracer
+    mock_client = MagicMock()
+    mock_client.send_event = AsyncMock()
+    mock_tracer.client = mock_client
     
     wrapper = OpenAIAgentsWrapper(mock_tracer)
     
@@ -94,19 +116,24 @@ async def test_openai_agents_wrapper():
     
     # Verify tracer interactions
     mock_tracer.start_span.assert_called_once_with("openai_agent.run")
-    assert mock_tracer.send_event.call_count >= 2  # Start and end events
+    assert mock_client.send_event.call_count >= 2  # Start and end events
 
 
 @pytest.mark.asyncio
 async def test_crewai_wrapper():
     """Test CrewAI wrapper functionality."""
-    from chaukas.integrations.crewai import CrewAIWrapper
+    from chaukas.sdk.integrations.crewai import CrewAIWrapper
     
     mock_tracer = MagicMock(spec=ChaukasTracer)
     mock_span = MagicMock()
     mock_tracer.start_span.return_value.__enter__ = MagicMock(return_value=mock_span)
     mock_tracer.start_span.return_value.__exit__ = MagicMock(return_value=None)
     mock_tracer.send_event = AsyncMock()
+    
+    # Mock client for tracer
+    mock_client = MagicMock()
+    mock_client.send_event = AsyncMock()
+    mock_tracer.client = mock_client
     
     wrapper = CrewAIWrapper(mock_tracer)
     
@@ -128,7 +155,7 @@ async def test_crewai_wrapper():
     
     # Verify tracer interactions
     mock_tracer.start_span.assert_called_once_with("crewai.crew.kickoff")
-    assert mock_tracer.send_event.call_count >= 2  # Start and end events
+    assert mock_client.send_event.call_count >= 2  # Start and end events
     assert result == "Task completed"
 
 

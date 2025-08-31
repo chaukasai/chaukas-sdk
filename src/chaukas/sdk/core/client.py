@@ -11,8 +11,8 @@ import httpx
 from chaukas.spec.common.v1.events_pb2 import Event, EventBatch
 from chaukas.spec.client.v1.client_pb2 import IngestEventRequest, IngestEventBatchRequest
 
-from .config import ChaukasConfig, get_config
-from .proto_wrapper import EventWrapper
+from chaukas.sdk.core.config import ChaukasConfig, get_config
+from chaukas.sdk.core.proto_wrapper import EventWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class ChaukasClient:
                 batch.events.extend(events_to_send)
                 
                 # Set batch metadata
-                from ..utils.uuid7 import generate_uuid7
+                from chaukas.sdk.utils.uuid7 import generate_uuid7
                 from google.protobuf import timestamp_pb2
                 
                 batch.batch_id = generate_uuid7()
@@ -165,7 +165,7 @@ class ChaukasClient:
         Returns:
             EventBuilder instance ready to create proto events
         """
-        from .event_builder import EventBuilder
+        from chaukas.sdk.core.event_builder import EventBuilder
         return EventBuilder()
     
     def create_event_wrapper(self, event: Optional[Event] = None) -> EventWrapper:

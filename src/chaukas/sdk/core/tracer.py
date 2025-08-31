@@ -10,12 +10,14 @@ Hierarchy: session_id -> trace_id -> span_id -> parent_span_id
 
 import asyncio
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from contextvars import ContextVar
 from datetime import datetime, timezone
 
-from .client import ChaukasClient
-from ..utils.uuid7 import generate_uuid7
+if TYPE_CHECKING:
+    from chaukas.sdk.core.client import ChaukasClient
+
+from chaukas.sdk.utils.uuid7 import generate_uuid7
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +136,7 @@ class ChaukasTracer:
     session -> trace -> span -> parent_span
     """
     
-    def __init__(self, client: ChaukasClient, session_id: Optional[str] = None):
+    def __init__(self, client: "ChaukasClient", session_id: Optional[str] = None):
         self.client = client
         self.default_session_id = session_id or generate_uuid7()
     

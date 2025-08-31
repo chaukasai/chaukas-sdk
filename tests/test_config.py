@@ -6,7 +6,7 @@ import pytest
 import os
 from unittest.mock import patch
 
-from chaukas.core.config import ChaukasConfig, get_config, set_config, reset_config
+from chaukas.sdk.core.config import ChaukasConfig, get_config, set_config, reset_config
 
 
 def test_config_from_dict():

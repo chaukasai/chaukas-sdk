@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import setup, find_namespace_packages
 
 setup(
     name="chaukas-sdk",
@@ -8,7 +8,7 @@ setup(
     long_description_content_type="text/markdown",
     author="Chaukas",
     package_dir={'': 'src'},
-    packages=find_packages(where='src'),
+    packages=find_namespace_packages(where='src'),
     python_requires=">=3.8",
     install_requires=[
         "chaukas-spec-client>=1.0.0",
