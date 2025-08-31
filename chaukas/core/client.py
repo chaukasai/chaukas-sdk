@@ -1,90 +1,118 @@
 """
-Chaukas client implementation following chaukas-spec-client interface.
+Chaukas client implementation using proto messages for 100% spec compliance.
 """
 
 import asyncio
 import logging
-import uuid
-from typing import Optional, Dict, Any, List
-from datetime import datetime, timezone
+from typing import Optional, List, Union
 
 import httpx
-from pydantic import BaseModel
+
+from chaukas.spec.common.v1.events_pb2 import Event, EventBatch
+from chaukas.spec.client.v1.client_pb2 import IngestEventRequest, IngestEventBatchRequest
+
+from .config import ChaukasConfig, get_config
+from .proto_wrapper import EventWrapper
 
 logger = logging.getLogger(__name__)
-
-
-class ChaukasEvent(BaseModel):
-    """Event model following chaukas-spec-client specification."""
-    
-    event_id: str
-    session_id: str
-    trace_id: str
-    span_id: str
-    parent_span_id: Optional[str] = None
-    timestamp: datetime
-    event_type: str
-    source: str
-    data: Dict[str, Any]
-    metadata: Optional[Dict[str, Any]] = None
 
 
 class ChaukasClient:
     """
     Client for sending events to Chaukas platform.
-    Implements the chaukas-spec-client interface.
+    Uses proto messages for 100% spec compliance.
     """
     
     def __init__(
         self,
-        endpoint: str,
-        api_key: str,
-        timeout: float = 30.0,
-        batch_size: int = 100,
-        flush_interval: float = 5.0,
+        config: Optional[ChaukasConfig] = None,
+        endpoint: Optional[str] = None,
+        api_key: Optional[str] = None,
+        timeout: Optional[float] = None,
+        batch_size: Optional[int] = None,
+        flush_interval: Optional[float] = None,
     ):
-        self.endpoint = endpoint.rstrip("/")
-        self.api_key = api_key
-        self.timeout = timeout
-        self.batch_size = batch_size
-        self.flush_interval = flush_interval
+        """
+        Initialize Chaukas client.
         
-        self._events_queue: List[ChaukasEvent] = []
+        Args:
+            config: ChaukasConfig instance (uses env config if not provided)
+            endpoint: API endpoint (overrides config)
+            api_key: API key (overrides config)
+            timeout: Request timeout (overrides config)
+            batch_size: Batch size (overrides config)
+            flush_interval: Flush interval (overrides config)
+        """
+        if config is None:
+            config = get_config()
+        
+        self.config = config
+        self.endpoint = (endpoint or config.endpoint).rstrip("/")
+        self.api_key = api_key or config.api_key
+        self.timeout = timeout or config.timeout
+        self.batch_size = batch_size or config.batch_size
+        self.flush_interval = flush_interval or config.flush_interval
+        
+        self._events_queue: List[Event] = []
         self._client = httpx.AsyncClient(
-            timeout=timeout,
+            timeout=self.timeout,
             headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/x-protobuf",
                 "User-Agent": "chaukas-sdk/0.1.0",
             }
         )
         self._flush_task: Optional[asyncio.Task] = None
         self._closed = False
     
-    async def send_event(self, event: ChaukasEvent) -> None:
-        """Send a single event to the platform."""
+    async def send_event(self, event: Union[Event, EventWrapper]) -> None:
+        """
+        Send a single event to the platform.
+        
+        Args:
+            event: Proto Event or EventWrapper instance
+        """
         if self._closed:
             logger.warning("Client is closed, ignoring event")
             return
         
-        self._events_queue.append(event)
+        # Convert wrapper to proto if needed
+        if isinstance(event, EventWrapper):
+            proto_event = event.to_proto()
+        else:
+            proto_event = event
+        
+        self._events_queue.append(proto_event)
         
         if len(self._events_queue) >= self.batch_size:
             await self._flush_events()
     
-    async def send_events(self, events: List[ChaukasEvent]) -> None:
-        """Send multiple events in batch."""
+    async def send_events(self, events: List[Union[Event, EventWrapper]]) -> None:
+        """
+        Send multiple events in batch.
+        
+        Args:
+            events: List of proto Events or EventWrapper instances
+        """
         if self._closed:
             logger.warning("Client is closed, ignoring events")
             return
         
-        self._events_queue.extend(events)
+        # Convert wrappers to proto if needed
+        proto_events = []
+        for event in events:
+            if isinstance(event, EventWrapper):
+                proto_events.append(event.to_proto())
+            else:
+                proto_events.append(event)
+        
+        self._events_queue.extend(proto_events)
         
         if len(self._events_queue) >= self.batch_size:
             await self._flush_events()
     
     async def _flush_events(self) -> None:
-        """Flush queued events to the platform."""
+        """Flush queued events to the platform using proto messages."""
         if not self._events_queue:
             return
         
@@ -92,14 +120,35 @@ class ChaukasClient:
         self._events_queue.clear()
         
         try:
-            payload = {
-                "events": [event.model_dump() for event in events_to_send]
-            }
+            if len(events_to_send) == 1:
+                # Send single event
+                request = IngestEventRequest()
+                request.event.CopyFrom(events_to_send[0])
+                
+                response = await self._client.post(
+                    f"{self.endpoint}/v1/events/ingest",
+                    content=request.SerializeToString()
+                )
+            else:
+                # Send batch of events
+                batch = EventBatch()
+                batch.events.extend(events_to_send)
+                
+                # Set batch metadata
+                from ..utils.uuid7 import generate_uuid7
+                from google.protobuf import timestamp_pb2
+                
+                batch.batch_id = generate_uuid7()
+                batch.timestamp.GetCurrentTime()
+                
+                request = IngestEventBatchRequest()
+                request.event_batch.CopyFrom(batch)
+                
+                response = await self._client.post(
+                    f"{self.endpoint}/v1/events/ingest-batch",
+                    content=request.SerializeToString()
+                )
             
-            response = await self._client.post(
-                f"{self.endpoint}/events",
-                json=payload
-            )
             response.raise_for_status()
             
             logger.debug(f"Successfully sent {len(events_to_send)} events")
@@ -109,30 +158,27 @@ class ChaukasClient:
             # Re-queue events for retry (simple strategy)
             self._events_queue = events_to_send + self._events_queue
     
-    def create_event(
-        self,
-        event_type: str,
-        source: str,
-        data: Dict[str, Any],
-        session_id: str,
-        trace_id: str,
-        span_id: str,
-        parent_span_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> ChaukasEvent:
-        """Create a new event with the given parameters."""
-        return ChaukasEvent(
-            event_id=str(uuid.uuid4()),
-            session_id=session_id,
-            trace_id=trace_id,
-            span_id=span_id,
-            parent_span_id=parent_span_id,
-            timestamp=datetime.now(timezone.utc),
-            event_type=event_type,
-            source=source,
-            data=data,
-            metadata=metadata,
-        )
+    def create_event_builder(self) -> "EventBuilder":
+        """
+        Create an EventBuilder instance configured with this client.
+        
+        Returns:
+            EventBuilder instance ready to create proto events
+        """
+        from .event_builder import EventBuilder
+        return EventBuilder()
+    
+    def create_event_wrapper(self, event: Optional[Event] = None) -> EventWrapper:
+        """
+        Create an EventWrapper instance.
+        
+        Args:
+            event: Optional proto Event to wrap
+            
+        Returns:
+            EventWrapper instance
+        """
+        return EventWrapper(event)
     
     async def flush(self) -> None:
         """Manually flush all queued events."""

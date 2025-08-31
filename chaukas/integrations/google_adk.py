@@ -1,23 +1,28 @@
 """
 Google ADK Python integration for Chaukas instrumentation.
+Uses proto-compliant events with proper MODEL_INVOCATION tracking.
 """
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from functools import wraps
 
+from chaukas.spec.common.v1.events_pb2 import EventStatus
+
 from ..core.tracer import ChaukasTracer
-from ..core.events import EventType
+from ..core.event_builder import EventBuilder
+from ..core.agent_mapper import AgentMapper
 
 logger = logging.getLogger(__name__)
 
 
 class GoogleADKWrapper:
-    """Wrapper for Google ADK instrumentation."""
+    """Wrapper for Google ADK instrumentation using proto events."""
     
     def __init__(self, tracer: ChaukasTracer):
         self.tracer = tracer
+        self.event_builder = EventBuilder()
     
     def wrap_agent_run(self, wrapped, instance, args, kwargs):
         """Wrap Agent.run method."""
@@ -29,58 +34,55 @@ class GoogleADKWrapper:
                 span.set_attribute("agent_name", getattr(instance, "name", "unknown"))
                 
                 try:
-                    # Extract agent configuration
-                    agent_data = {
-                        "agent_id": getattr(instance, "_id", str(id(instance))),
-                        "agent_name": getattr(instance, "name", "unknown"),
-                        "model": getattr(instance, "model", None),
-                        "description": getattr(instance, "description", None),
-                        "instructions": getattr(instance, "instruction", None),
-                        "tools": self._extract_tools(instance),
-                    }
+                    # Extract agent info using mapper
+                    agent_id, agent_name = AgentMapper.map_google_adk_agent(instance)
                     
-                    # Send agent start event
-                    await self.tracer.send_event(
-                        event_type=EventType.AGENT_START,
-                        source="google_adk",
-                        data=agent_data,
-                        normalize_for="google",
+                    # Send AGENT_START event
+                    start_event = self.event_builder.create_agent_start(
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        role="google_adk_agent",
+                        instructions=getattr(instance, "instruction", None),
+                        tools=self._extract_tools(instance),
+                        metadata={
+                            "framework": "google_adk",
+                            "model": getattr(instance, "model", None),
+                            "description": getattr(instance, "description", None),
+                        }
                     )
+                    
+                    await self.tracer.client.send_event(start_event)
                     
                     # Execute original method
                     result = await wrapped(*args, **kwargs)
                     
-                    # Send agent end event
-                    end_data = agent_data.copy()
-                    end_data.update({
-                        "result_type": type(result).__name__,
-                        "result_content": str(result)[:500] if result else None,
-                    })
-                    
-                    await self.tracer.send_event(
-                        event_type=EventType.AGENT_END,
-                        source="google_adk",
-                        data=end_data,
-                        normalize_for="google",
+                    # Send AGENT_END event
+                    end_event = self.event_builder.create_agent_end(
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        status=EventStatus.EVENT_STATUS_COMPLETED,
+                        metadata={
+                            "framework": "google_adk",
+                            "result_type": type(result).__name__,
+                            "result_content": str(result)[:500] if result else None,
+                        }
                     )
+                    
+                    await self.tracer.client.send_event(end_event)
                     
                     return result
                     
                 except Exception as e:
-                    # Send agent error event
-                    error_data = {
-                        "agent_id": getattr(instance, "_id", str(id(instance))),
-                        "agent_name": getattr(instance, "name", "unknown"),
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                    }
-                    
-                    await self.tracer.send_event(
-                        event_type=EventType.AGENT_ERROR,
-                        source="google_adk",
-                        data=error_data,
-                        normalize_for="google",
+                    # Send ERROR event
+                    error_event = self.event_builder.create_error(
+                        error_message=str(e),
+                        error_code=type(e).__name__,
+                        recoverable=True,
+                        agent_id=agent_id,
+                        agent_name=agent_name
                     )
+                    
+                    await self.tracer.client.send_event(error_event)
                     
                     raise
         
@@ -94,70 +96,63 @@ class GoogleADKWrapper:
             return sync_wrapper
     
     def wrap_llm_agent_run(self, wrapped, instance, args, kwargs):
-        """Wrap LlmAgent.run method with LLM-specific instrumentation."""
+        """Wrap LlmAgent.run method with proto MODEL_INVOCATION events."""
         
         @wraps(wrapped)
         async def async_wrapper(*args, **kwargs):
+            # Extract agent info using mapper
+            agent_id, agent_name = AgentMapper.map_google_adk_agent(instance)
+            
             with self.tracer.start_span("google_adk.llm_agent.run") as span:
                 span.set_attribute("agent_type", "google_adk_llm")
-                span.set_attribute("agent_name", getattr(instance, "name", "unknown"))
+                span.set_attribute("agent_name", agent_name)
                 span.set_attribute("model", getattr(instance, "model", "unknown"))
                 
                 try:
-                    # Extract LLM request data
-                    request_data = {
-                        "provider": "google",
-                        "model": getattr(instance, "model", "unknown"),
-                        "agent_name": getattr(instance, "name", "unknown"),
-                        "input": args[0] if args else None,
-                        "instructions": getattr(instance, "instruction", None),
-                    }
+                    # Send MODEL_INVOCATION_START event
+                    model = getattr(instance, "model", "unknown")
+                    input_text = args[0] if args else ""
                     
-                    # Send LLM request event
-                    await self.tracer.send_event(
-                        event_type=EventType.LLM_REQUEST,
-                        source="google_adk",
-                        data=request_data,
-                        normalize_for="google",
+                    start_event = self.event_builder.create_model_invocation_start(
+                        provider="google",
+                        model=model,
+                        messages=[{"role": "user", "content": str(input_text)}],
+                        agent_id=agent_id,
+                        agent_name=agent_name
                     )
+                    
+                    await self.tracer.client.send_event(start_event)
                     
                     # Execute original method
                     result = await wrapped(*args, **kwargs)
                     
-                    # Send LLM response event
-                    response_data = {
-                        "provider": "google",
-                        "model": getattr(instance, "model", "unknown"),
-                        "agent_name": getattr(instance, "name", "unknown"),
-                        "content": str(result)[:1000] if result else None,
-                        "result_type": type(result).__name__,
-                    }
-                    
-                    await self.tracer.send_event(
-                        event_type=EventType.LLM_RESPONSE,
-                        source="google_adk",
-                        data=response_data,
-                        normalize_for="google",
+                    # Send MODEL_INVOCATION_END event
+                    end_event = self.event_builder.create_model_invocation_end(
+                        provider="google",
+                        model=model,
+                        response_content=str(result)[:1000] if result else None,
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        # Note: Token counts typically not available in Google ADK
                     )
+                    
+                    await self.tracer.client.send_event(end_event)
                     
                     return result
                     
                 except Exception as e:
-                    # Send LLM error event
-                    error_data = {
-                        "provider": "google",
-                        "model": getattr(instance, "model", "unknown"),
-                        "agent_name": getattr(instance, "name", "unknown"),
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                    }
+                    # Send MODEL_INVOCATION_END with error
+                    model = getattr(instance, "model", "unknown")
                     
-                    await self.tracer.send_event(
-                        event_type=EventType.LLM_RESPONSE,
-                        source="google_adk",
-                        data=error_data,
-                        normalize_for="google",
+                    error_event = self.event_builder.create_model_invocation_end(
+                        provider="google",
+                        model=model,
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        error=str(e)
                     )
+                    
+                    await self.tracer.client.send_event(error_event)
                     
                     raise
         

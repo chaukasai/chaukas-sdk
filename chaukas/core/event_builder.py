@@ -9,8 +9,12 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 from google.protobuf import timestamp_pb2, struct_pb2
 
-from chaukas.spec.common.v1 import events_pb2
-from chaukas.spec.client.v1 import client_pb2
+from chaukas.spec.common.v1.events_pb2 import (
+    Event, EventType, EventStatus, Severity, Author,
+    MessageContent, ToolCall, ToolResponse, LLMInvocation,
+    PolicyDecision, DataAccess, ErrorInfo, RetryInfo,
+    AgentHandoff, MCPCall, PerformanceMetrics, CostDetails
+)
 
 from .config import get_config
 from .tracer import _session_id, _trace_id, _span_id, _parent_span_id
@@ -31,13 +35,13 @@ class EventBuilder:
     
     def _create_base_event(
         self,
-        event_type: events_pb2.EventType,
-        severity: events_pb2.Severity = events_pb2.Severity.SEVERITY_INFO,
-        status: events_pb2.EventStatus = events_pb2.EventStatus.EVENT_STATUS_STARTED,
-        author: events_pb2.Author = events_pb2.Author.AUTHOR_SYSTEM,
+        event_type: EventType,
+        severity: Severity = Severity.SEVERITY_INFO,
+        status: EventStatus = EventStatus.EVENT_STATUS_STARTED,
+        author: Author = Author.AUTHOR_SYSTEM,
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None,
-    ) -> events_pb2.Event:
+    ) -> Event:
         """
         Create base event with common fields populated.
         
@@ -52,7 +56,7 @@ class EventBuilder:
         Returns:
             Proto Event with base fields populated
         """
-        event = events_pb2.Event()
+        event = Event()
         
         # Required fields
         event.event_id = generate_uuid7()
@@ -98,12 +102,12 @@ class EventBuilder:
         self,
         session_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create SESSION_START event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_SESSION_START,
-            status=events_pb2.EventStatus.EVENT_STATUS_STARTED,
-            author=events_pb2.Author.AUTHOR_SYSTEM,
+            event_type=EventType.EVENT_TYPE_SESSION_START,
+            status=EventStatus.EVENT_STATUS_STARTED,
+            author=Author.AUTHOR_SYSTEM,
         )
         
         if session_id:
@@ -118,12 +122,12 @@ class EventBuilder:
         self,
         session_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create SESSION_END event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_SESSION_END,
-            status=events_pb2.EventStatus.EVENT_STATUS_COMPLETED,
-            author=events_pb2.Author.AUTHOR_SYSTEM,
+            event_type=EventType.EVENT_TYPE_SESSION_END,
+            status=EventStatus.EVENT_STATUS_COMPLETED,
+            author=Author.AUTHOR_SYSTEM,
         )
         
         if session_id:
@@ -144,12 +148,12 @@ class EventBuilder:
         instructions: Optional[str] = None,
         tools: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create AGENT_START event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_AGENT_START,
-            status=events_pb2.EventStatus.EVENT_STATUS_STARTED,
-            author=events_pb2.Author.AUTHOR_AGENT,
+            event_type=EventType.EVENT_TYPE_AGENT_START,
+            status=EventStatus.EVENT_STATUS_STARTED,
+            author=Author.AUTHOR_AGENT,
             agent_id=agent_id,
             agent_name=agent_name,
         )
@@ -177,14 +181,14 @@ class EventBuilder:
         self,
         agent_id: str,
         agent_name: str,
-        status: events_pb2.EventStatus = events_pb2.EventStatus.EVENT_STATUS_COMPLETED,
+        status: EventStatus = EventStatus.EVENT_STATUS_COMPLETED,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create AGENT_END event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_AGENT_END,
+            event_type=EventType.EVENT_TYPE_AGENT_END,
             status=status,
-            author=events_pb2.Author.AUTHOR_AGENT,
+            author=Author.AUTHOR_AGENT,
             agent_id=agent_id,
             agent_name=agent_name,
         )
@@ -203,18 +207,18 @@ class EventBuilder:
         reason: Optional[str] = None,
         handoff_type: Optional[str] = None,
         handoff_data: Optional[Dict[str, Any]] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create AGENT_HANDOFF event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_AGENT_HANDOFF,
-            status=events_pb2.EventStatus.EVENT_STATUS_COMPLETED,
-            author=events_pb2.Author.AUTHOR_AGENT,
+            event_type=EventType.EVENT_TYPE_AGENT_HANDOFF,
+            status=EventStatus.EVENT_STATUS_COMPLETED,
+            author=Author.AUTHOR_AGENT,
             agent_id=from_agent_id,
             agent_name=from_agent_name,
         )
         
         # Create AgentHandoff message
-        handoff = events_pb2.AgentHandoff()
+        handoff = AgentHandoff()
         handoff.from_agent_id = from_agent_id
         handoff.from_agent_name = from_agent_name
         handoff.to_agent_id = to_agent_id
@@ -243,18 +247,18 @@ class EventBuilder:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         tools: Optional[List[Dict[str, Any]]] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create MODEL_INVOCATION_START event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_MODEL_INVOCATION_START,
-            status=events_pb2.EventStatus.EVENT_STATUS_STARTED,
-            author=events_pb2.Author.AUTHOR_LLM,
+            event_type=EventType.EVENT_TYPE_MODEL_INVOCATION_START,
+            status=EventStatus.EVENT_STATUS_STARTED,
+            author=Author.AUTHOR_LLM,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create LLMInvocation message
-        llm = events_pb2.LLMInvocation()
+        llm = LLMInvocation()
         llm.provider = provider
         llm.model = model
         
@@ -294,20 +298,20 @@ class EventBuilder:
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None,
         error: Optional[str] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create MODEL_INVOCATION_END event."""
-        status = events_pb2.EventStatus.EVENT_STATUS_FAILED if error else events_pb2.EventStatus.EVENT_STATUS_COMPLETED
+        status = EventStatus.EVENT_STATUS_FAILED if error else EventStatus.EVENT_STATUS_COMPLETED
         
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_MODEL_INVOCATION_END,
+            event_type=EventType.EVENT_TYPE_MODEL_INVOCATION_END,
             status=status,
-            author=events_pb2.Author.AUTHOR_LLM,
+            author=Author.AUTHOR_LLM,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create LLMInvocation message
-        llm = events_pb2.LLMInvocation()
+        llm = LLMInvocation()
         llm.provider = provider
         llm.model = model
         
@@ -342,7 +346,7 @@ class EventBuilder:
         
         # Add error info if present
         if error:
-            error_info = events_pb2.ErrorInfo()
+            error_info = ErrorInfo()
             error_info.error_message = error
             error_info.recoverable = True
             event.error.CopyFrom(error_info)
@@ -358,18 +362,18 @@ class EventBuilder:
         call_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create TOOL_CALL_START event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_TOOL_CALL_START,
-            status=events_pb2.EventStatus.EVENT_STATUS_STARTED,
-            author=events_pb2.Author.AUTHOR_TOOL,
+            event_type=EventType.EVENT_TYPE_TOOL_CALL_START,
+            status=EventStatus.EVENT_STATUS_STARTED,
+            author=Author.AUTHOR_TOOL,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create ToolCall message
-        tool_call = events_pb2.ToolCall()
+        tool_call = ToolCall()
         tool_call.name = tool_name
         self._dict_to_struct(arguments, tool_call.arguments)
         
@@ -391,20 +395,20 @@ class EventBuilder:
         execution_time_ms: Optional[float] = None,
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create TOOL_CALL_END event."""
-        status = events_pb2.EventStatus.EVENT_STATUS_FAILED if error else events_pb2.EventStatus.EVENT_STATUS_COMPLETED
+        status = EventStatus.EVENT_STATUS_FAILED if error else EventStatus.EVENT_STATUS_COMPLETED
         
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_TOOL_CALL_END,
+            event_type=EventType.EVENT_TYPE_TOOL_CALL_END,
             status=status,
-            author=events_pb2.Author.AUTHOR_TOOL,
+            author=Author.AUTHOR_TOOL,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create ToolResponse message
-        tool_response = events_pb2.ToolResponse()
+        tool_response = ToolResponse()
         tool_response.tool_name = tool_name
         
         if call_id:
@@ -423,7 +427,7 @@ class EventBuilder:
         
         # Add error info if present
         if error:
-            error_info = events_pb2.ErrorInfo()
+            error_info = ErrorInfo()
             error_info.error_message = error
             error_info.recoverable = True
             event.error.CopyFrom(error_info)
@@ -442,18 +446,18 @@ class EventBuilder:
         protocol_version: Optional[str] = None,
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create MCP_CALL_START event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_MCP_CALL_START,
-            status=events_pb2.EventStatus.EVENT_STATUS_STARTED,
-            author=events_pb2.Author.AUTHOR_SYSTEM,
+            event_type=EventType.EVENT_TYPE_MCP_CALL_START,
+            status=EventStatus.EVENT_STATUS_STARTED,
+            author=Author.AUTHOR_SYSTEM,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create MCPCall message
-        mcp_call = events_pb2.MCPCall()
+        mcp_call = MCPCall()
         mcp_call.server_name = server_name
         mcp_call.server_url = server_url
         mcp_call.operation = operation
@@ -478,20 +482,20 @@ class EventBuilder:
         error: Optional[str] = None,
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create MCP_CALL_END event."""
-        status = events_pb2.EventStatus.EVENT_STATUS_FAILED if error else events_pb2.EventStatus.EVENT_STATUS_COMPLETED
+        status = EventStatus.EVENT_STATUS_FAILED if error else EventStatus.EVENT_STATUS_COMPLETED
         
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_MCP_CALL_END,
+            event_type=EventType.EVENT_TYPE_MCP_CALL_END,
             status=status,
-            author=events_pb2.Author.AUTHOR_SYSTEM,
+            author=Author.AUTHOR_SYSTEM,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create MCPCall message
-        mcp_call = events_pb2.MCPCall()
+        mcp_call = MCPCall()
         mcp_call.server_name = server_name
         mcp_call.server_url = server_url
         mcp_call.operation = operation
@@ -505,7 +509,7 @@ class EventBuilder:
         
         # Add error info if present
         if error:
-            error_info = events_pb2.ErrorInfo()
+            error_info = ErrorInfo()
             error_info.error_message = error
             error_info.recoverable = True
             event.error.CopyFrom(error_info)
@@ -521,18 +525,18 @@ class EventBuilder:
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create INPUT_RECEIVED event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_INPUT_RECEIVED,
-            status=events_pb2.EventStatus.EVENT_STATUS_COMPLETED,
-            author=events_pb2.Author.AUTHOR_USER,
+            event_type=EventType.EVENT_TYPE_INPUT_RECEIVED,
+            status=EventStatus.EVENT_STATUS_COMPLETED,
+            author=Author.AUTHOR_USER,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create MessageContent
-        message = events_pb2.MessageContent()
+        message = MessageContent()
         message.role = "user"
         message.text = content
         
@@ -550,18 +554,18 @@ class EventBuilder:
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create OUTPUT_EMITTED event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_OUTPUT_EMITTED,
-            status=events_pb2.EventStatus.EVENT_STATUS_COMPLETED,
-            author=events_pb2.Author.AUTHOR_AGENT,
+            event_type=EventType.EVENT_TYPE_OUTPUT_EMITTED,
+            status=EventStatus.EVENT_STATUS_COMPLETED,
+            author=Author.AUTHOR_AGENT,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create MessageContent
-        message = events_pb2.MessageContent()
+        message = MessageContent()
         message.role = "assistant"
         message.text = content
         
@@ -583,19 +587,19 @@ class EventBuilder:
         recovery_action: Optional[str] = None,
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create ERROR event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_ERROR,
-            severity=events_pb2.Severity.SEVERITY_ERROR,
-            status=events_pb2.EventStatus.EVENT_STATUS_FAILED,
-            author=events_pb2.Author.AUTHOR_SYSTEM,
+            event_type=EventType.EVENT_TYPE_ERROR,
+            severity=Severity.SEVERITY_ERROR,
+            status=EventStatus.EVENT_STATUS_FAILED,
+            author=Author.AUTHOR_SYSTEM,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create ErrorInfo message
-        error_info = events_pb2.ErrorInfo()
+        error_info = ErrorInfo()
         error_info.error_message = error_message
         
         if error_code:
@@ -620,19 +624,19 @@ class EventBuilder:
         reason: Optional[str] = None,
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create RETRY event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_RETRY,
-            severity=events_pb2.Severity.SEVERITY_WARN,
-            status=events_pb2.EventStatus.EVENT_STATUS_IN_PROGRESS,
-            author=events_pb2.Author.AUTHOR_SYSTEM,
+            event_type=EventType.EVENT_TYPE_RETRY,
+            severity=Severity.SEVERITY_WARN,
+            status=EventStatus.EVENT_STATUS_IN_PROGRESS,
+            author=Author.AUTHOR_SYSTEM,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create RetryInfo message
-        retry_info = events_pb2.RetryInfo()
+        retry_info = RetryInfo()
         retry_info.attempt = attempt
         retry_info.strategy = strategy
         retry_info.backoff_ms = backoff_ms
@@ -655,18 +659,18 @@ class EventBuilder:
         rationale: Optional[str] = None,
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create POLICY_DECISION event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_POLICY_DECISION,
-            status=events_pb2.EventStatus.EVENT_STATUS_COMPLETED,
-            author=events_pb2.Author.AUTHOR_SYSTEM,
+            event_type=EventType.EVENT_TYPE_POLICY_DECISION,
+            status=EventStatus.EVENT_STATUS_COMPLETED,
+            author=Author.AUTHOR_SYSTEM,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create PolicyDecision message
-        policy = events_pb2.PolicyDecision()
+        policy = PolicyDecision()
         policy.policy_id = policy_id
         policy.outcome = outcome
         policy.rule_ids.extend(rule_ids)
@@ -686,18 +690,18 @@ class EventBuilder:
         pii_categories: Optional[List[str]] = None,
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create DATA_ACCESS event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_DATA_ACCESS,
-            status=events_pb2.EventStatus.EVENT_STATUS_COMPLETED,
-            author=events_pb2.Author.AUTHOR_SYSTEM,
+            event_type=EventType.EVENT_TYPE_DATA_ACCESS,
+            status=EventStatus.EVENT_STATUS_COMPLETED,
+            author=Author.AUTHOR_SYSTEM,
             agent_id=agent_id,
             agent_name=agent_name,
         )
         
         # Create DataAccess message
-        data_access = events_pb2.DataAccess()
+        data_access = DataAccess()
         data_access.datasource = datasource
         
         if document_ids:
@@ -718,12 +722,12 @@ class EventBuilder:
         state_data: Dict[str, Any],
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create STATE_UPDATE event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_STATE_UPDATE,
-            status=events_pb2.EventStatus.EVENT_STATUS_COMPLETED,
-            author=events_pb2.Author.AUTHOR_SYSTEM,
+            event_type=EventType.EVENT_TYPE_STATE_UPDATE,
+            status=EventStatus.EVENT_STATUS_COMPLETED,
+            author=Author.AUTHOR_SYSTEM,
             agent_id=agent_id,
             agent_name=agent_name,
         )
@@ -738,17 +742,17 @@ class EventBuilder:
     def create_system_event(
         self,
         message: str,
-        severity: events_pb2.Severity = events_pb2.Severity.SEVERITY_INFO,
+        severity: Severity = Severity.SEVERITY_INFO,
         metadata: Optional[Dict[str, Any]] = None,
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
-    ) -> events_pb2.Event:
+    ) -> Event:
         """Create SYSTEM event."""
         event = self._create_base_event(
-            event_type=events_pb2.EventType.EVENT_TYPE_SYSTEM,
+            event_type=EventType.EVENT_TYPE_SYSTEM,
             severity=severity,
-            status=events_pb2.EventStatus.EVENT_STATUS_COMPLETED,
-            author=events_pb2.Author.AUTHOR_SYSTEM,
+            status=EventStatus.EVENT_STATUS_COMPLETED,
+            author=Author.AUTHOR_SYSTEM,
             agent_id=agent_id,
             agent_name=agent_name,
         )
@@ -790,6 +794,6 @@ class EventBuilder:
                 # Convert to string for unsupported types
                 struct[key] = str(value)
     
-    def _set_metadata(self, event: events_pb2.Event, metadata: Dict[str, Any]) -> None:
+    def _set_metadata(self, event: Event, metadata: Dict[str, Any]) -> None:
         """Set metadata on event."""
         self._dict_to_struct(metadata, event.metadata)

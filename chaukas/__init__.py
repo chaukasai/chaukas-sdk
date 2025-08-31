@@ -8,9 +8,39 @@ from typing import Optional, Dict, Any
 
 from .core.client import ChaukasClient
 from .core.tracer import ChaukasTracer
+from .core.config import ChaukasConfig, get_config, set_config
+from .core.event_builder import EventBuilder
+from .core.proto_wrapper import EventWrapper
+from .core.agent_mapper import AgentMapper
 from .utils.monkey_patch import MonkeyPatcher
 
 __version__ = "0.1.0"
+
+# Export proto messages for advanced usage
+try:
+    from chaukas.spec.common.v1 import events_pb2
+    from chaukas.spec.client.v1 import client_pb2
+except ImportError as e:
+    import logging
+    logging.warning(f"Failed to import proto modules: {e}. Proto features will not be available.")
+    events_pb2 = None
+    client_pb2 = None
+
+__all__ = [
+    "enable_chaukas",
+    "disable_chaukas", 
+    "is_enabled",
+    "get_tracer",
+    "get_client",
+    "ChaukasClient",
+    "ChaukasTracer",
+    "ChaukasConfig",
+    "EventBuilder",
+    "EventWrapper",
+    "AgentMapper",
+    "events_pb2",
+    "client_pb2",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +53,25 @@ _enabled = False
 def enable_chaukas(
     endpoint: Optional[str] = None,
     api_key: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    project_id: Optional[str] = None,
     session_id: Optional[str] = None,
     config: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
-    Enable Chaukas instrumentation for agent SDKs.
+    Enable Chaukas instrumentation for agent SDKs with proto compliance.
+    
+    Required environment variables (if not provided as parameters):
+    - CHAUKAS_ENDPOINT: API endpoint
+    - CHAUKAS_API_KEY: API key  
+    - CHAUKAS_TENANT_ID: Tenant ID
+    - CHAUKAS_PROJECT_ID: Project ID
     
     Args:
         endpoint: Override CHAUKAS_ENDPOINT environment variable
-        api_key: Override CHAUKAS_API_KEY environment variable  
+        api_key: Override CHAUKAS_API_KEY environment variable
+        tenant_id: Override CHAUKAS_TENANT_ID environment variable
+        project_id: Override CHAUKAS_PROJECT_ID environment variable
         session_id: Optional session ID for tracing
         config: Additional configuration options
     """
@@ -41,25 +81,36 @@ def enable_chaukas(
         logger.warning("Chaukas is already enabled")
         return
     
-    # Get configuration from environment or parameters
-    endpoint = endpoint or os.getenv("CHAUKAS_ENDPOINT")
-    api_key = api_key or os.getenv("CHAUKAS_API_KEY")
-    
-    if not endpoint:
-        raise ValueError("CHAUKAS_ENDPOINT environment variable or endpoint parameter is required")
-    if not api_key:
-        raise ValueError("CHAUKAS_API_KEY environment variable or api_key parameter is required")
-    
-    # Initialize core components
-    _client = ChaukasClient(endpoint=endpoint, api_key=api_key)
-    _tracer = ChaukasTracer(client=_client, session_id=session_id)
-    _patcher = MonkeyPatcher(tracer=_tracer, config=config or {})
-    
-    # Apply monkey patches
-    _patcher.patch_all()
-    
-    _enabled = True
-    logger.info("Chaukas instrumentation enabled")
+    try:
+        # Create or override configuration
+        if any([endpoint, api_key, tenant_id, project_id]):
+            # Create config from parameters and environment
+            chaukas_config = ChaukasConfig(
+                endpoint=endpoint or os.getenv("CHAUKAS_ENDPOINT"),
+                api_key=api_key or os.getenv("CHAUKAS_API_KEY"),
+                tenant_id=tenant_id or os.getenv("CHAUKAS_TENANT_ID"),
+                project_id=project_id or os.getenv("CHAUKAS_PROJECT_ID"),
+                # Use defaults for other fields
+            )
+            set_config(chaukas_config)
+        else:
+            # Use environment configuration
+            chaukas_config = get_config()
+        
+        # Initialize core components
+        _client = ChaukasClient(config=chaukas_config)
+        _tracer = ChaukasTracer(client=_client, session_id=session_id)
+        _patcher = MonkeyPatcher(tracer=_tracer, config=config or {})
+        
+        # Apply monkey patches
+        _patcher.patch_all()
+        
+        _enabled = True
+        logger.info("Chaukas instrumentation enabled with proto compliance")
+        
+    except Exception as e:
+        logger.error(f"Failed to enable Chaukas: {e}")
+        raise
 
 
 def disable_chaukas() -> None:
