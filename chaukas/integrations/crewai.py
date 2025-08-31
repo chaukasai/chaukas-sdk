@@ -1,23 +1,29 @@
 """
 CrewAI integration for Chaukas instrumentation.
+Uses proto-compliant events with proper agent handoff tracking.
 """
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from functools import wraps
 
+from chaukas.spec.common.v1.events_pb2 import EventStatus
+
 from ..core.tracer import ChaukasTracer
-from ..core.events import EventType
+from ..core.event_builder import EventBuilder
+from ..core.agent_mapper import AgentMapper
 
 logger = logging.getLogger(__name__)
 
 
 class CrewAIWrapper:
-    """Wrapper for CrewAI instrumentation."""
+    """Wrapper for CrewAI instrumentation using proto events."""
     
     def __init__(self, tracer: ChaukasTracer):
         self.tracer = tracer
+        self.event_builder = EventBuilder()
+        self._current_agents: List[Any] = []  # Track agents for handoff events
     
     def wrap_crew_kickoff(self, wrapped, instance, args, kwargs):
         """Wrap Crew.kickoff method."""
@@ -31,73 +37,67 @@ class CrewAIWrapper:
                     # Extract crew configuration
                     agents = getattr(instance, "agents", [])
                     tasks = getattr(instance, "tasks", [])
+                    crew_name = getattr(instance, "name", "crew")
                     process = getattr(instance, "process", "unknown")
                     
-                    crew_data = {
-                        "crew_id": str(id(instance)),
-                        "agents_count": len(agents),
-                        "tasks_count": len(tasks),
-                        "process_type": str(process),
-                        "agents": [
-                            {
-                                "agent_id": str(id(agent)),
-                                "role": getattr(agent, "role", "unknown"),
-                                "goal": getattr(agent, "goal", None),
-                                "backstory": getattr(agent, "backstory", None)[:200] if getattr(agent, "backstory", None) else None,
-                            }
-                            for agent in agents
-                        ],
-                        "tasks": [
-                            {
-                                "task_id": str(id(task)),
-                                "description": getattr(task, "description", "unknown")[:200],
-                                "agent": getattr(task, "agent", {}).get("role", "unknown") if hasattr(task, "agent") else "unknown",
-                            }
-                            for task in tasks
-                        ],
-                    }
+                    # Store agents for potential handoff tracking
+                    self._current_agents = agents
                     
-                    # Send session start event
-                    await self.tracer.send_event(
-                        event_type=EventType.SESSION_START,
-                        source="crewai",
-                        data=crew_data,
-                        normalize_for="crewai",
+                    # Send SESSION_START event for the crew execution
+                    session_start = self.event_builder.create_session_start(
+                        metadata={
+                            "crew_name": crew_name,
+                            "agents_count": len(agents),
+                            "tasks_count": len(tasks),
+                            "process_type": str(process),
+                            "framework": "crewai",
+                            "agents": [
+                                {
+                                    "agent_id": str(getattr(agent, "id", agent.role)),
+                                    "role": getattr(agent, "role", "unknown"),
+                                    "goal": getattr(agent, "goal", None),
+                                }
+                                for agent in agents
+                            ],
+                            "tasks": [
+                                {
+                                    "task_id": str(id(task)),
+                                    "description": getattr(task, "description", "unknown")[:200],
+                                    "assigned_agent": getattr(task.agent, "role", "unknown") if hasattr(task, "agent") else "unknown",
+                                }
+                                for task in tasks
+                            ],
+                        }
                     )
+                    
+                    await self.tracer.client.send_event(session_start)
                     
                     # Execute original method
                     result = await wrapped(*args, **kwargs)
                     
-                    # Send session end event
-                    end_data = crew_data.copy()
-                    end_data.update({
-                        "result": str(result)[:500] if result else None,
-                        "result_type": type(result).__name__,
-                    })
-                    
-                    await self.tracer.send_event(
-                        event_type=EventType.SESSION_END,
-                        source="crewai",
-                        data=end_data,
-                        normalize_for="crewai",
+                    # Send SESSION_END event
+                    session_end = self.event_builder.create_session_end(
+                        metadata={
+                            "crew_name": crew_name,
+                            "result": str(result)[:500] if result else None,
+                            "result_type": type(result).__name__,
+                            "framework": "crewai",
+                        }
                     )
+                    
+                    await self.tracer.client.send_event(session_end)
                     
                     return result
                     
                 except Exception as e:
-                    # Send error event
-                    error_data = {
-                        "crew_id": str(id(instance)),
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                    }
-                    
-                    await self.tracer.send_event(
-                        event_type=EventType.AGENT_ERROR,
-                        source="crewai",
-                        data=error_data,
-                        normalize_for="crewai",
+                    # Send ERROR event
+                    error_event = self.event_builder.create_error(
+                        error_message=str(e),
+                        error_code=type(e).__name__,
+                        recoverable=True,
                     )
+                    
+                    await self.tracer.client.send_event(error_event)
                     
                     raise
         
@@ -124,77 +124,71 @@ class CrewAIWrapper:
             return sync_wrapper
     
     def wrap_agent_execute_task(self, wrapped, instance, args, kwargs):
-        """Wrap Agent.execute_task method."""
+        """Wrap Agent.execute_task method with proto AGENT events."""
         
         @wraps(wrapped)
         async def async_wrapper(*args, **kwargs):
+            # Extract agent info using mapper
+            agent_id, agent_name = AgentMapper.map_crewai_agent(instance)
+            
             with self.tracer.start_span("crewai.agent.execute_task") as span:
                 span.set_attribute("agent_type", "crewai")
                 span.set_attribute("agent_role", getattr(instance, "role", "unknown"))
                 
                 try:
-                    # Extract agent and task data
+                    # Extract task data
                     task = args[0] if args else None
                     
-                    agent_data = {
-                        "agent_id": str(id(instance)),
-                        "role": getattr(instance, "role", "unknown"),
-                        "goal": getattr(instance, "goal", None),
-                        "backstory": getattr(instance, "backstory", None)[:200] if getattr(instance, "backstory", None) else None,
-                        "tools": [str(tool) for tool in getattr(instance, "tools", [])],
-                    }
-                    
-                    task_data = {}
-                    if task:
-                        task_data = {
-                            "task_id": str(id(task)),
-                            "description": getattr(task, "description", "unknown")[:200],
-                            "expected_output": getattr(task, "expected_output", None)[:200] if getattr(task, "expected_output", None) else None,
+                    # Send AGENT_START event
+                    start_event = self.event_builder.create_agent_start(
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        role=getattr(instance, "role", "unknown"),
+                        instructions=getattr(instance, "goal", None),
+                        tools=[str(tool) for tool in getattr(instance, "tools", [])],
+                        metadata={
+                            "framework": "crewai",
+                            "backstory": getattr(instance, "backstory", None)[:200] if getattr(instance, "backstory", None) else None,
+                            "task": {
+                                "task_id": str(id(task)) if task else None,
+                                "description": getattr(task, "description", None)[:200] if task else None,
+                                "expected_output": getattr(task, "expected_output", None)[:200] if task and getattr(task, "expected_output", None) else None,
+                            } if task else None
                         }
-                    
-                    # Send agent start event
-                    start_data = {**agent_data, **task_data}
-                    await self.tracer.send_event(
-                        event_type=EventType.AGENT_START,
-                        source="crewai",
-                        data=start_data,
-                        normalize_for="crewai",
                     )
+                    
+                    await self.tracer.client.send_event(start_event)
                     
                     # Execute original method
                     result = await wrapped(*args, **kwargs)
                     
-                    # Send agent end event
-                    end_data = start_data.copy()
-                    end_data.update({
-                        "result": str(result)[:500] if result else None,
-                        "result_type": type(result).__name__,
-                    })
-                    
-                    await self.tracer.send_event(
-                        event_type=EventType.AGENT_END,
-                        source="crewai",
-                        data=end_data,
-                        normalize_for="crewai",
+                    # Send AGENT_END event
+                    end_event = self.event_builder.create_agent_end(
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        status=EventStatus.EVENT_STATUS_COMPLETED,
+                        metadata={
+                            "framework": "crewai",
+                            "result": str(result)[:500] if result else None,
+                            "result_type": type(result).__name__,
+                        }
                     )
+                    
+                    await self.tracer.client.send_event(end_event)
                     
                     return result
                     
                 except Exception as e:
-                    # Send agent error event
-                    error_data = {
-                        "agent_id": str(id(instance)),
-                        "role": getattr(instance, "role", "unknown"),
-                        "error": str(e),
-                        "error_type": type(e).__name__,
-                    }
-                    
-                    await self.tracer.send_event(
-                        event_type=EventType.AGENT_ERROR,
-                        source="crewai",
-                        data=error_data,
-                        normalize_for="crewai",
+                    # Send ERROR event
+                    error_event = self.event_builder.create_error(
+                        error_message=str(e),
+                        error_code=type(e).__name__,
+                        recoverable=True,
+                        agent_id=agent_id,
+                        agent_name=agent_name
                     )
+                    
+                    await self.tracer.client.send_event(error_event)
                     
                     raise
         
