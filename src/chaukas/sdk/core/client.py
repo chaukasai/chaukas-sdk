@@ -3,10 +3,13 @@ Chaukas client implementation using proto messages for 100% spec compliance.
 """
 
 import asyncio
+import json
 import logging
 from typing import Optional, List, Union
+from datetime import datetime
 
 import httpx
+from google.protobuf.json_format import MessageToDict
 
 from chaukas.spec.common.v1.events_pb2 import Event, EventBatch
 from chaukas.spec.client.v1.client_pb2 import IngestEventRequest, IngestEventBatchRequest
@@ -112,7 +115,7 @@ class ChaukasClient:
             await self._flush_events()
     
     async def _flush_events(self) -> None:
-        """Flush queued events to the platform using proto messages."""
+        """Flush queued events to the platform or file."""
         if not self._events_queue:
             return
         
@@ -120,43 +123,62 @@ class ChaukasClient:
         self._events_queue.clear()
         
         try:
-            if len(events_to_send) == 1:
-                # Send single event
-                request = IngestEventRequest()
-                request.event.CopyFrom(events_to_send[0])
-                
-                response = await self._client.post(
-                    f"{self.endpoint}/v1/events/ingest",
-                    content=request.SerializeToString()
-                )
+            if self.config.output_mode == "file":
+                await self._write_events_to_file(events_to_send)
             else:
-                # Send batch of events
-                batch = EventBatch()
-                batch.events.extend(events_to_send)
+                await self._send_events_to_api(events_to_send)
                 
-                # Set batch metadata
-                from chaukas.sdk.utils.uuid7 import generate_uuid7
-                from google.protobuf import timestamp_pb2
-                
-                batch.batch_id = generate_uuid7()
-                batch.timestamp.GetCurrentTime()
-                
-                request = IngestEventBatchRequest()
-                request.event_batch.CopyFrom(batch)
-                
-                response = await self._client.post(
-                    f"{self.endpoint}/v1/events/ingest-batch",
-                    content=request.SerializeToString()
-                )
-            
-            response.raise_for_status()
-            
             logger.debug(f"Successfully sent {len(events_to_send)} events")
             
         except Exception as e:
             logger.error(f"Failed to send events: {e}")
-            # Re-queue events for retry (simple strategy)
+            # Re-queue events for retry
             self._events_queue = events_to_send + self._events_queue
+    
+    async def _send_events_to_api(self, events: List[Event]) -> None:
+        """Send events to API endpoint."""
+        if len(events) == 1:
+            # Send single event
+            request = IngestEventRequest()
+            request.event.CopyFrom(events[0])
+            
+            response = await self._client.post(
+                f"{self.endpoint}/v1/events/ingest",
+                content=request.SerializeToString()
+            )
+        else:
+            # Send batch of events
+            batch = EventBatch()
+            batch.events.extend(events)
+            
+            # Set batch metadata
+            from chaukas.sdk.utils.uuid7 import generate_uuid7
+            
+            batch.batch_id = generate_uuid7()
+            batch.timestamp.GetCurrentTime()
+            
+            request = IngestEventBatchRequest()
+            request.event_batch.CopyFrom(batch)
+            
+            response = await self._client.post(
+                f"{self.endpoint}/v1/events/ingest-batch",
+                content=request.SerializeToString()
+            )
+        
+        response.raise_for_status()
+    
+    async def _write_events_to_file(self, events: List[Event]) -> None:
+        """Write events to file in JSON Lines format."""
+        import aiofiles
+        
+        async with aiofiles.open(self.config.output_file, "a") as f:
+            for event in events:
+                # Convert proto to dict for JSON serialization
+                event_dict = MessageToDict(event, preserving_proto_field_name=True)
+                event_dict["timestamp"] = datetime.utcnow().isoformat()
+                
+                # Write as JSON line
+                await f.write(json.dumps(event_dict) + "\n")
     
     def create_event_builder(self) -> "EventBuilder":
         """

@@ -19,6 +19,7 @@ setup(
         "protobuf>=5.26.0",
         "grpcio>=1.50.0",
         "uuid6>=2024.1.12",  # For UUID7 generation
+        "aiofiles>=23.0.0",  # For async file operations
     ],
     extras_require={
         "openai": ["openai-agents"],
