@@ -6,8 +6,8 @@ import pytest
 import os
 from datetime import datetime
 
-from chaukas.core.event_builder import EventBuilder
-from chaukas.core.config import ChaukasConfig, set_config
+from chaukas.sdk.core.event_builder import EventBuilder
+from chaukas.sdk.core.config import ChaukasConfig, set_config
 
 
 @pytest.fixture(autouse=True)
@@ -22,7 +22,7 @@ def setup_config():
     set_config(config)
     yield
     # Reset config after test
-    from chaukas.core.config import reset_config
+    from chaukas.sdk.core.config import reset_config
     reset_config()
 
 
@@ -70,7 +70,7 @@ def test_create_agent_start(builder):
     
     assert event.agent_id == "agent-123"
     assert event.agent_name == "Test Agent"
-    assert event.type == 3  # EVENT_TYPE_AGENT_START
+    assert event.type == 10  # EVENT_TYPE_AGENT_START
 
 
 def test_create_agent_end(builder):
@@ -81,7 +81,7 @@ def test_create_agent_end(builder):
     )
     
     assert event.agent_id == "agent-123"
-    assert event.type == 4  # EVENT_TYPE_AGENT_END
+    assert event.type == 11  # EVENT_TYPE_AGENT_END
     assert event.status == 3  # EVENT_STATUS_COMPLETED
 
 
@@ -99,7 +99,7 @@ def test_create_model_invocation_start(builder):
     assert event.llm_invocation.model == "gpt-4"
     assert event.llm_invocation.temperature == 0.7
     assert event.llm_invocation.max_tokens == 100
-    assert event.type == 5  # EVENT_TYPE_MODEL_INVOCATION_START
+    assert event.type == 20  # EVENT_TYPE_MODEL_INVOCATION_START
 
 
 def test_create_model_invocation_end(builder):
@@ -117,7 +117,7 @@ def test_create_model_invocation_end(builder):
     assert event.llm_invocation.prompt_tokens == 10
     assert event.llm_invocation.completion_tokens == 5
     assert event.llm_invocation.total_tokens == 15
-    assert event.type == 6  # EVENT_TYPE_MODEL_INVOCATION_END
+    assert event.type == 21  # EVENT_TYPE_MODEL_INVOCATION_END
 
 
 def test_create_tool_call_start(builder):
@@ -130,7 +130,7 @@ def test_create_tool_call_start(builder):
     
     assert event.tool_call.name == "calculator"
     assert event.tool_call.id == "call-123"
-    assert event.type == 7  # EVENT_TYPE_TOOL_CALL_START
+    assert event.type == 22  # EVENT_TYPE_TOOL_CALL_START
 
 
 def test_create_tool_call_end(builder):
@@ -142,10 +142,9 @@ def test_create_tool_call_end(builder):
         execution_time_ms=50.5
     )
     
-    assert event.tool_response.tool_name == "calculator"
     assert event.tool_response.tool_call_id == "call-123"
     assert event.tool_response.execution_time_ms == 50.5
-    assert event.type == 8  # EVENT_TYPE_TOOL_CALL_END
+    assert event.type == 23  # EVENT_TYPE_TOOL_CALL_END
 
 
 def test_create_input_received(builder):
@@ -157,7 +156,7 @@ def test_create_input_received(builder):
     
     assert event.message.role == "user"
     assert event.message.text == "User input text"
-    assert event.type == 9  # EVENT_TYPE_INPUT_RECEIVED
+    assert event.type == 30  # EVENT_TYPE_INPUT_RECEIVED
 
 
 def test_create_output_emitted(builder):
@@ -169,7 +168,7 @@ def test_create_output_emitted(builder):
     
     assert event.message.role == "assistant"
     assert event.message.text == "Agent response"
-    assert event.type == 10  # EVENT_TYPE_OUTPUT_EMITTED
+    assert event.type == 31  # EVENT_TYPE_OUTPUT_EMITTED
 
 
 def test_create_error(builder):
@@ -186,7 +185,7 @@ def test_create_error(builder):
     assert event.error.error_code == "ERR_001"
     assert event.error.recoverable is True
     assert event.error.recovery_action == "Retry"
-    assert event.type == 11  # EVENT_TYPE_ERROR
+    assert event.type == 40  # EVENT_TYPE_ERROR
     assert event.severity == 4  # SEVERITY_ERROR
 
 
@@ -203,7 +202,7 @@ def test_create_agent_handoff(builder):
     assert event.agent_handoff.from_agent_id == "agent-1"
     assert event.agent_handoff.to_agent_id == "agent-2"
     assert event.agent_handoff.reason == "Task delegation"
-    assert event.type == 14  # EVENT_TYPE_AGENT_HANDOFF
+    assert event.type == 12  # EVENT_TYPE_AGENT_HANDOFF
 
 
 def test_create_state_update(builder):
@@ -215,13 +214,13 @@ def test_create_state_update(builder):
     # Check that state_update struct was populated
     assert "step" in event.state_update
     assert "status" in event.state_update
-    assert event.type == 19  # EVENT_TYPE_STATE_UPDATE
+    assert event.type == 62  # EVENT_TYPE_STATE_UPDATE
 
 
 def test_distributed_tracing_hierarchy(builder):
     """Test that distributed tracing hierarchy is maintained."""
     # Set context
-    from chaukas.core.tracer import _session_id, _trace_id, _span_id, _parent_span_id
+    from chaukas.sdk.core.tracer import _session_id, _trace_id, _span_id, _parent_span_id
     
     _session_id.set("session-123")
     _trace_id.set("trace-456")

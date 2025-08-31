@@ -7,7 +7,7 @@ import asyncio
 from crewai import Agent, Task, Crew, Process
 
 # Import and enable Chaukas instrumentation
-import chaukas
+from chaukas import sdk as chaukas
 
 # Set environment variables
 os.environ["CHAUKAS_ENDPOINT"] = "https://api.chaukas.com"

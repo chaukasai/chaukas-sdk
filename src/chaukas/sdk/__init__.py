@@ -6,13 +6,13 @@ import os
 import logging
 from typing import Optional, Dict, Any
 
-from .core.client import ChaukasClient
-from .core.tracer import ChaukasTracer
-from .core.config import ChaukasConfig, get_config, set_config
-from .core.event_builder import EventBuilder
-from .core.proto_wrapper import EventWrapper
-from .core.agent_mapper import AgentMapper
-from .utils.monkey_patch import MonkeyPatcher
+from chaukas.sdk.core.client import ChaukasClient
+from chaukas.sdk.core.tracer import ChaukasTracer
+from chaukas.sdk.core.config import ChaukasConfig, get_config, set_config
+from chaukas.sdk.core.event_builder import EventBuilder
+from chaukas.sdk.core.proto_wrapper import EventWrapper
+from chaukas.sdk.core.agent_mapper import AgentMapper
+from chaukas.sdk.utils.monkey_patch import MonkeyPatcher
 
 __version__ = "0.1.0"
 

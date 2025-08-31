@@ -10,7 +10,7 @@ from functools import wraps
 
 import wrapt
 
-from ..core.tracer import ChaukasTracer
+from chaukas.sdk.core.tracer import ChaukasTracer
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,7 @@ class MonkeyPatcher:
     
     def _patch_openai_agents(self) -> None:
         """Apply patches for OpenAI Agents SDK."""
-        from ..integrations.openai_agents import OpenAIAgentsWrapper
+        from chaukas.sdk.integrations.openai_agents import OpenAIAgentsWrapper
         wrapper = OpenAIAgentsWrapper(self.tracer)
         
         # Patch Agent.run
@@ -104,7 +104,7 @@ class MonkeyPatcher:
     
     def _patch_google_adk(self) -> None:
         """Apply patches for Google ADK."""
-        from ..integrations.google_adk import GoogleADKWrapper
+        from chaukas.sdk.integrations.google_adk import GoogleADKWrapper
         wrapper = GoogleADKWrapper(self.tracer)
         
         # Patch Agent execution methods
@@ -124,7 +124,7 @@ class MonkeyPatcher:
     
     def _patch_crewai(self) -> None:
         """Apply patches for CrewAI."""
-        from ..integrations.crewai import CrewAIWrapper
+        from chaukas.sdk.integrations.crewai import CrewAIWrapper
         wrapper = CrewAIWrapper(self.tracer)
         
         # Patch Crew.kickoff
@@ -229,7 +229,7 @@ def create_wrapper(event_type: str, source: str, normalize_for: Optional[str] = 
     def decorator(func):
         @wraps(func)
         async def async_wrapper(wrapped, instance, args, kwargs):
-            from .. import get_tracer
+            from chaukas.sdk import get_tracer
             
             tracer = get_tracer()
             if not tracer:
@@ -290,7 +290,7 @@ def create_wrapper(event_type: str, source: str, normalize_for: Optional[str] = 
         
         @wraps(func)
         def sync_wrapper(wrapped, instance, args, kwargs):
-            from .. import get_tracer
+            from chaukas.sdk import get_tracer
             
             tracer = get_tracer()
             if not tracer:

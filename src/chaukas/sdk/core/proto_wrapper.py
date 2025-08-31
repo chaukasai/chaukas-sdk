@@ -16,7 +16,7 @@ from chaukas.spec.common.v1.events_pb2 import (
 )
 from chaukas.spec.client.v1.client_pb2 import IngestEventRequest
 
-from .event_builder import EventBuilder
+from chaukas.sdk.core.event_builder import EventBuilder
 
 
 class EventWrapper:
