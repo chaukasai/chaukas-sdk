@@ -4,6 +4,8 @@ Chaukas SDK - One-line instrumentation for agent building SDKs.
 
 import os
 import logging
+import atexit
+import asyncio
 from typing import Optional, Dict, Any
 
 from chaukas.sdk.core.client import ChaukasClient
@@ -106,11 +108,49 @@ def enable_chaukas(
         _patcher.patch_all()
         
         _enabled = True
+        
+        # Register cleanup handler to flush events on exit
+        atexit.register(_cleanup_on_exit)
+        
         logger.info("Chaukas instrumentation enabled with proto compliance")
         
     except Exception as e:
         logger.error(f"Failed to enable Chaukas: {e}")
         raise
+
+
+def _cleanup_on_exit() -> None:
+    """Cleanup handler called on program exit to flush events."""
+    global _enabled
+    
+    if _enabled:
+        logger.debug("Flushing events on program exit...")
+        _close_client_sync()
+
+
+def _close_client_sync() -> None:
+    """Helper to close client from sync context."""
+    global _client
+    
+    if _client is None:
+        return
+    
+    try:
+        # Try to get the running event loop
+        loop = asyncio.get_running_loop()
+        # Schedule the close coroutine as a task
+        asyncio.create_task(_client.close())
+    except RuntimeError:
+        # No running loop, create one to close the client
+        try:
+            asyncio.run(_client.close())
+        except Exception as e:
+            logger.warning(f"Failed to close client properly: {e}")
+            # At minimum, try to flush events
+            try:
+                asyncio.run(_client.flush())
+            except Exception as flush_error:
+                logger.error(f"Failed to flush events: {flush_error}")
 
 
 def disable_chaukas() -> None:
@@ -119,6 +159,9 @@ def disable_chaukas() -> None:
     
     if not _enabled:
         return
+    
+    # Close client to flush events
+    _close_client_sync()
     
     if _patcher:
         _patcher.unpatch_all()
