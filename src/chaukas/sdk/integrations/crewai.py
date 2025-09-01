@@ -7,8 +7,17 @@ import functools
 import logging
 from typing import Any, Dict, Optional, List
 import json
+import os
+import time
 
-from chaukas.spec.common.v1.events_pb2 import EventStatus, EventSeverity
+# Optional performance monitoring
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
+from chaukas.spec.common.v1.events_pb2 import EventStatus
 
 from chaukas.sdk.core.tracer import ChaukasTracer
 from chaukas.sdk.core.event_builder import EventBuilder
@@ -24,12 +33,17 @@ class CrewAIWrapper:
         self.tracer = tracer
         self.event_builder = EventBuilder()
         self._current_agents: List[Any] = []  # Track agents for handoff events
+        self._last_active_agent = None  # Track last active agent for handoff detection
         self._original_kickoff = None
         self._original_kickoff_async = None
         self._original_kickoff_for_each = None
         self._original_kickoff_for_each_async = None
         self._original_execute_task = None
         self.event_listener = None  # Event bus listener
+        self._start_time = None  # Track execution start time
+        self._start_metrics = None  # Track initial performance metrics
+        self._session_span_id = None  # Track SESSION_START span_id for hierarchy
+        self._current_agent_span_id = None  # Track current agent span for child events
     
     def patch_crew(self):
         """Apply patches to all CrewAI Crew methods."""
@@ -43,18 +57,8 @@ class CrewAIWrapper:
             self._original_kickoff_for_each = getattr(Crew, 'kickoff_for_each', None)
             self._original_kickoff_for_each_async = getattr(Crew, 'kickoff_for_each_async', None)
             
-            def _send_event_sync(self, event):
-                """Helper to send event from sync context."""
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # Schedule as task if loop is running
-                        asyncio.create_task(self.tracer.client.send_event(event))
-                    else:
-                        loop.run_until_complete(self.tracer.client.send_event(event))
-                except RuntimeError:
-                    # No event loop, create one
-                    asyncio.run(self.tracer.client.send_event(event))
+            # Store wrapper reference for use in nested functions
+            wrapper = self
             
             def _extract_crew_data(crew_instance, args, kwargs):
                 """Extract crew configuration and input data."""
@@ -75,15 +79,22 @@ class CrewAIWrapper:
                 }
             
             # Create sync kickoff wrapper
-            @functools.wraps(self._original_kickoff)
+            @functools.wraps(wrapper._original_kickoff)
             def instrumented_kickoff(crew_instance, *args, **kwargs):
                 """Instrumented sync version of Crew.kickoff()."""
                 crew_data = _extract_crew_data(crew_instance, args, kwargs)
                 
-                with self.tracer.start_span("crewai.crew.kickoff") as span:
+                with wrapper.tracer.start_span("crewai.crew.kickoff") as span:
                     span.set_attribute("method", "kickoff")
                     span.set_attribute("crew_name", crew_data['crew_name'])
                     span.set_attribute("agents_count", len(crew_data['agents']))
+                    
+                    # Reset last active agent for new crew execution
+                    wrapper._last_active_agent = None
+                    
+                    # Track start time and metrics
+                    wrapper._start_time = time.time()
+                    wrapper._start_metrics = wrapper._get_performance_metrics()
                     
                     try:
                         # Send session start event
@@ -96,63 +107,72 @@ class CrewAIWrapper:
                                 "tasks_count": len(crew_data['tasks']),
                             }
                         )
-                        self._send_event_sync(session_start)
+                        wrapper._send_event_sync(session_start)
                         
                         # Send input received event if inputs provided
                         if crew_data['inputs']:
-                            input_event = self.event_builder.create_input_received(
+                            input_event = wrapper.event_builder.create_input_received(
                                 content=str(crew_data['inputs'])[:1000],
                                 metadata={"input_type": "crew_inputs", "method": "kickoff"}
                             )
-                            self._send_event_sync(input_event)
+                            wrapper._send_event_sync(input_event)
                         
                         # Execute original method
-                        result = self._original_kickoff(crew_instance, *args, **kwargs)
+                        result = wrapper._original_kickoff(crew_instance, *args, **kwargs)
                         
                         # Send output event
-                        output_event = self.event_builder.create_output_emitted(
+                        output_event = wrapper.event_builder.create_output_emitted(
                             content=str(result)[:1000] if result else "No result",
                             metadata={"output_type": "crew_result", "method": "kickoff"}
                         )
-                        self._send_event_sync(output_event)
+                        wrapper._send_event_sync(output_event)
                         
-                        # Send session end event
-                        session_end = self.event_builder.create_session_end(
+                        # Calculate performance metrics
+                        duration_ms = (time.time() - wrapper._start_time) * 1000 if wrapper._start_time else None
+                        end_metrics = wrapper._get_performance_metrics()
+                        token_estimate = wrapper._estimate_tokens(crew_data.get('inputs'), result)
+                        
+                        # Send session end event with enhanced metadata
+                        session_end = wrapper.event_builder.create_session_end(
                             metadata={
                                 "crew_name": crew_data['crew_name'],
                                 "method": "kickoff",
                                 "success": True,
-                                "result_type": type(result).__name__
+                                "result_type": type(result).__name__,
+                                "duration_ms": duration_ms,
+                                "estimated_tokens": token_estimate,
+                                "cpu_percent": end_metrics.get('cpu_percent'),
+                                "memory_mb": end_metrics.get('memory_mb')
                             }
                         )
-                        self._send_event_sync(session_end)
+                        wrapper._send_event_sync(session_end)
                         
                         return result
                         
                     except Exception as e:
                         # Send error event
-                        error_event = self.event_builder.create_error(
+                        error_event = wrapper.event_builder.create_error(
                             error_message=str(e),
                             error_code=type(e).__name__,
                             recoverable=True,
                         )
-                        self._send_event_sync(error_event)
+                        wrapper._send_event_sync(error_event)
                         raise
             
             # Create async kickoff wrapper  
-            @functools.wraps(self._original_kickoff_async or self._original_kickoff)
+            @functools.wraps(wrapper._original_kickoff_async or wrapper._original_kickoff)
             async def instrumented_kickoff_async(crew_instance, *args, **kwargs):
                 """Instrumented async version of Crew.kickoff_async()."""
                 crew_data = _extract_crew_data(crew_instance, args, kwargs)
                 
-                with self.tracer.start_span("crewai.crew.kickoff_async") as span:
+                with wrapper.tracer.start_span("crewai.crew.kickoff_async") as span:
                     span.set_attribute("method", "kickoff_async")
                     span.set_attribute("crew_name", crew_data['crew_name'])
                     span.set_attribute("agents_count", len(crew_data['agents']))
                     
                     try:
                         # Send session start event
-                        session_start = self.event_builder.create_session_start(
+                        session_start = wrapper.event_builder.create_session_start(
                             metadata={
                                 "crew_name": crew_data['crew_name'],
                                 "method": "kickoff_async",
@@ -161,31 +181,31 @@ class CrewAIWrapper:
                                 "tasks_count": len(crew_data['tasks']),
                             }
                         )
-                        await self.tracer.client.send_event(session_start)
+                        await wrapper.tracer.client.send_event(session_start)
                         
                         # Send input received event if inputs provided
                         if crew_data['inputs']:
-                            input_event = self.event_builder.create_input_received(
+                            input_event = wrapper.event_builder.create_input_received(
                                 content=str(crew_data['inputs'])[:1000],
                                 metadata={"input_type": "crew_inputs", "method": "kickoff_async"}
                             )
-                            await self.tracer.client.send_event(input_event)
+                            await wrapper.tracer.client.send_event(input_event)
                         
                         # Execute original method
-                        if self._original_kickoff_async:
-                            result = await self._original_kickoff_async(crew_instance, *args, **kwargs)
+                        if wrapper._original_kickoff_async:
+                            result = await wrapper._original_kickoff_async(crew_instance, *args, **kwargs)
                         else:
-                            result = self._original_kickoff(crew_instance, *args, **kwargs)
+                            result = wrapper._original_kickoff(crew_instance, *args, **kwargs)
                         
                         # Send output event
-                        output_event = self.event_builder.create_output_emitted(
+                        output_event = wrapper.event_builder.create_output_emitted(
                             content=str(result)[:1000] if result else "No result",
                             metadata={"output_type": "crew_result", "method": "kickoff_async"}
                         )
-                        await self.tracer.client.send_event(output_event)
+                        await wrapper.tracer.client.send_event(output_event)
                         
                         # Send session end event
-                        session_end = self.event_builder.create_session_end(
+                        session_end = wrapper.event_builder.create_session_end(
                             metadata={
                                 "crew_name": crew_data['crew_name'],
                                 "method": "kickoff_async",
@@ -193,31 +213,36 @@ class CrewAIWrapper:
                                 "result_type": type(result).__name__
                             }
                         )
-                        await self.tracer.client.send_event(session_end)
+                        await wrapper.tracer.client.send_event(session_end)
                         
                         return result
                         
                     except Exception as e:
                         # Send error event
-                        error_event = self.event_builder.create_error(
+                        error_event = wrapper.event_builder.create_error(
                             error_message=str(e),
                             error_code=type(e).__name__,
                             recoverable=True,
                         )
-                        await self.tracer.client.send_event(error_event)
+                        await wrapper.tracer.client.send_event(error_event)
                         raise
             
             # Patch all methods
             Crew.kickoff = instrumented_kickoff
-            if self._original_kickoff_async:
+            if wrapper._original_kickoff_async:
                 Crew.kickoff_async = instrumented_kickoff_async
             
             # TODO: Add kickoff_for_each and kickoff_for_each_async wrappers
             
             # Initialize and register event bus listener
             if not self.event_listener:
+                logger.info("🎯 Creating CrewAIEventBusListener...")
                 self.event_listener = CrewAIEventBusListener(self)
+                logger.info("🎯 Registering event handlers...")
                 self.event_listener.register_handlers()
+                logger.info("✓ Event bus listener initialized and handlers registered")
+            else:
+                logger.debug("Event listener already exists, skipping creation")
             
             logger.info("Successfully patched Crew kickoff methods")
             return True
@@ -257,59 +282,86 @@ class CrewAIWrapper:
                 # Extract agent info using mapper
                 agent_id, agent_name = AgentMapper.map_crewai_agent(agent_instance)
                 
-                with self.tracer.start_span("crewai.agent.execute_task") as span:
-                    span.set_attribute("agent_type", "crewai")
-                    span.set_attribute("agent_role", getattr(agent_instance, "role", "unknown"))
+                # Don't create a span here - let AGENT_START be the parent for child events
+                try:
+                    # Extract task data
+                    task = args[0] if args else None
+                    
+                    # Check for agent handoff
+                    if self._last_active_agent and self._last_active_agent != (agent_id, agent_name):
+                        last_id, last_name = self._last_active_agent
+                        # Emit AGENT_HANDOFF event
+                        handoff_event = self.event_builder.create_agent_handoff(
+                            from_agent_id=last_id,
+                            from_agent_name=last_name,
+                            to_agent_id=agent_id,
+                            to_agent_name=agent_name,
+                            reason="Task delegation in sequential process",
+                            handoff_type="sequential",
+                            handoff_data={
+                                "task": getattr(task, "description", None) if task else None,
+                                "framework": "crewai"
+                            }
+                        )
+                        self._send_event_sync(handoff_event)
+                    
+                    # Update last active agent
+                    self._last_active_agent = (agent_id, agent_name)
+                    
+                    # Send agent start event
+                    start_event = self.event_builder.create_agent_start(
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        role=getattr(agent_instance, "role", "unknown"),
+                        instructions=getattr(agent_instance, "goal", None),
+                        tools=[str(tool) for tool in getattr(agent_instance, "tools", [])],
+                        metadata={
+                            "framework": "crewai",
+                            "backstory": getattr(agent_instance, "backstory", None),
+                            "task_description": getattr(task, "description", None) if task else None,
+                            "expected_output": getattr(task, "expected_output", None) if task else None,
+                        }
+                    )
+                    self._send_event_sync(start_event)
+                    
+                    # Set the agent's span_id as the parent context for child events
+                    # This ensures MODEL/TOOL events are children of AGENT_START
+                    from chaukas.sdk.core.tracer import _parent_span_id
+                    token = _parent_span_id.set(start_event.span_id)
                     
                     try:
-                        # Extract task data
-                        task = args[0] if args else None
-                        
-                        # Send agent start event
-                        start_event = self.event_builder.create_agent_start(
-                            agent_id=agent_id,
-                            agent_name=agent_name,
-                            role=getattr(agent_instance, "role", "unknown"),
-                            instructions=getattr(agent_instance, "goal", None),
-                            tools=[str(tool) for tool in getattr(agent_instance, "tools", [])],
-                            metadata={
-                                "framework": "crewai",
-                                "backstory": getattr(agent_instance, "backstory", None),
-                                "task_description": getattr(task, "description", None) if task else None,
-                                "expected_output": getattr(task, "expected_output", None) if task else None,
-                            }
-                        )
-                        self._send_event_sync(start_event)
-                        
-                        # Execute original method
+                        # Execute original method  
                         result = self._original_execute_task(agent_instance, *args, **kwargs)
-                        
-                        # Send agent end event
-                        end_event = self.event_builder.create_agent_end(
-                            agent_id=agent_id,
-                            agent_name=agent_name,
-                            status=EventStatus.EVENT_STATUS_COMPLETED,
-                            metadata={
-                                "framework": "crewai",
-                                "result": str(result)[:500] if result else None,
-                                "result_type": type(result).__name__,
-                            }
-                        )
-                        self._send_event_sync(end_event)
-                        
-                        return result
-                        
-                    except Exception as e:
-                        # Send agent error event
-                        error_event = self.event_builder.create_error(
-                            error_message=str(e),
-                            error_code=type(e).__name__,
-                            recoverable=True,
-                            agent_id=agent_id,
-                            agent_name=agent_name
-                        )
-                        self._send_event_sync(error_event)
-                        raise
+                    finally:
+                        # Reset parent context
+                        _parent_span_id.reset(token)
+                    
+                    # Send agent end event
+                    end_event = self.event_builder.create_agent_end(
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        status=EventStatus.EVENT_STATUS_COMPLETED,
+                        metadata={
+                            "framework": "crewai",
+                            "result": str(result)[:500] if result else None,
+                            "result_type": type(result).__name__,
+                        }
+                    )
+                    self._send_event_sync(end_event)
+                    
+                    return result
+                    
+                except Exception as e:
+                    # Send agent error event
+                    error_event = self.event_builder.create_error(
+                        error_message=str(e),
+                        error_code=type(e).__name__,
+                        recoverable=True,
+                        agent_id=agent_id,
+                        agent_name=agent_name
+                    )
+                    self._send_event_sync(error_event)
+                    raise
             
             # Replace the method
             Agent.execute_task = instrumented_execute_task
@@ -350,6 +402,44 @@ class CrewAIWrapper:
                 logger.info("Successfully unpatched Agent.execute_task")
             except Exception as e:
                 logger.error(f"Failed to unpatch Agent: {e}")
+    
+    def _get_performance_metrics(self):
+        """Collect current performance metrics."""
+        if not PSUTIL_AVAILABLE:
+            return {}
+        
+        try:
+            process = psutil.Process(os.getpid())
+            return {
+                'cpu_percent': process.cpu_percent(),
+                'memory_mb': process.memory_info().rss / 1024 / 1024,
+                'num_threads': process.num_threads()
+            }
+        except Exception:
+            return {}
+    
+    def _estimate_tokens(self, input_data, output_data):
+        """Estimate token usage for the conversation."""
+        def count_tokens_approx(data):
+            """Rough approximation: ~4 characters per token."""
+            if not data:
+                return 0
+            
+            if isinstance(data, str):
+                return len(data) // 4
+            elif isinstance(data, dict):
+                total = 0
+                for value in data.values():
+                    if isinstance(value, str):
+                        total += len(value) // 4
+                return total
+            elif hasattr(data, '__str__'):
+                return len(str(data)) // 4
+            return 0
+        
+        input_tokens = count_tokens_approx(input_data)
+        output_tokens = count_tokens_approx(output_data)
+        return input_tokens + output_tokens
 
 
 class CrewAIEventBusListener:
@@ -363,8 +453,10 @@ class CrewAIEventBusListener:
         
     def register_handlers(self):
         """Register event handlers with CrewAI's event bus."""
+        logger.info("🚀 Starting CrewAIEventBusListener handler registration...")
         try:
             from crewai.utilities.events.crewai_event_bus import crewai_event_bus
+            logger.info("✓ CrewAI event bus imported successfully")
             
             # Import all event types we want to handle
             from crewai.utilities.events.tool_usage_events import (
@@ -387,6 +479,73 @@ class CrewAIEventBusListener:
                 KnowledgeQueryStartedEvent,
                 KnowledgeQueryCompletedEvent
             )
+            
+            # Import LLM events for MODEL_INVOCATION tracking
+            llm_events_available = False
+            guardrail_events_available = False
+            
+            try:
+                from crewai.utilities.events.llm_events import (
+                    LLMCallStartedEvent,
+                    LLMCallCompletedEvent,
+                    LLMCallFailedEvent
+                )
+                llm_events_available = True
+                logger.info("✓ LLM events ARE available in this CrewAI version")
+                
+                # Try to import guardrail events separately as they might not exist
+                try:
+                    from crewai.utilities.events.llm_events import (
+                        LLMGuardrailStartedEvent,
+                        LLMGuardrailCompletedEvent
+                    )
+                    guardrail_events_available = True
+                    logger.info("✓ LLM Guardrail events are also available")
+                except ImportError:
+                    logger.debug("LLM Guardrail events not available (optional)")
+                    
+            except ImportError as e:
+                logger.warning(f"✗ LLM events NOT available in this CrewAI version: {e}")
+            
+            # Import reasoning events
+            try:
+                from crewai.utilities.events.agent_events import (
+                    AgentReasoningStartedEvent,
+                    AgentReasoningCompletedEvent,
+                    AgentReasoningFailedEvent,
+                    AgentExecutionStartedEvent,
+                    AgentExecutionCompletedEvent
+                )
+                reasoning_events_available = True
+            except ImportError:
+                logger.debug("Reasoning events not available in this CrewAI version")
+                reasoning_events_available = False
+            
+            # Import flow events
+            try:
+                from crewai.utilities.events.flow_events import (
+                    FlowStartedEvent,
+                    FlowFinishedEvent,
+                    MethodExecutionStartedEvent,
+                    MethodExecutionFinishedEvent
+                )
+                flow_events_available = True
+            except ImportError:
+                logger.debug("Flow events not available in this CrewAI version")
+                flow_events_available = False
+            
+            # Import crew training/test events
+            try:
+                from crewai.utilities.events.crew_events import (
+                    CrewTrainStartedEvent,
+                    CrewTrainCompletedEvent,
+                    CrewTestStartedEvent,
+                    CrewTestCompletedEvent
+                )
+                crew_events_available = True
+            except ImportError:
+                logger.debug("Crew training/test events not available in this CrewAI version")
+                crew_events_available = False
             
             # Register tool usage handlers
             @crewai_event_bus.on(ToolUsageStartedEvent)
@@ -440,6 +599,91 @@ class CrewAIEventBusListener:
             def handle_knowledge_query_completed(source, event: KnowledgeQueryCompletedEvent):
                 self._handle_knowledge_query_completed(event)
             
+            # Register LLM event handlers if available
+            if llm_events_available:
+                logger.info("Registering LLM event handlers...")
+                
+                @crewai_event_bus.on(LLMCallStartedEvent)
+                def handle_llm_started(source, event: LLMCallStartedEvent):
+                    logger.debug(f"📤 LLM Started event received: model={getattr(event, 'model', '?')}")
+                    self._handle_llm_started(event)
+                
+                @crewai_event_bus.on(LLMCallCompletedEvent)
+                def handle_llm_completed(source, event: LLMCallCompletedEvent):
+                    logger.debug(f"📥 LLM Completed event received")
+                    self._handle_llm_completed(event)
+                
+                @crewai_event_bus.on(LLMCallFailedEvent)
+                def handle_llm_failed(source, event: LLMCallFailedEvent):
+                    logger.debug(f"❌ LLM Failed event received")
+                    self._handle_llm_failed(event)
+                
+                logger.info("✓ LLM event handlers registered successfully")
+                
+                # Register guardrail handlers if available
+                if guardrail_events_available:
+                    @crewai_event_bus.on(LLMGuardrailStartedEvent)
+                    def handle_guardrail_started(source, event: LLMGuardrailStartedEvent):
+                        self._handle_guardrail_started(event)
+                    
+                    @crewai_event_bus.on(LLMGuardrailCompletedEvent)
+                    def handle_guardrail_completed(source, event: LLMGuardrailCompletedEvent):
+                        self._handle_guardrail_completed(event)
+                    
+                    logger.info("✓ LLM Guardrail handlers also registered")
+            else:
+                logger.warning("⚠️  LLM event handlers NOT registered (events not available)")
+            
+            # Register reasoning event handlers if available
+            if reasoning_events_available:
+                @crewai_event_bus.on(AgentReasoningStartedEvent)
+                def handle_reasoning_started(source, event: AgentReasoningStartedEvent):
+                    self._handle_reasoning_started(event)
+                
+                @crewai_event_bus.on(AgentReasoningCompletedEvent)
+                def handle_reasoning_completed(source, event: AgentReasoningCompletedEvent):
+                    self._handle_reasoning_completed(event)
+                
+                @crewai_event_bus.on(AgentReasoningFailedEvent)
+                def handle_reasoning_failed(source, event: AgentReasoningFailedEvent):
+                    self._handle_reasoning_failed(event)
+                
+                @crewai_event_bus.on(AgentExecutionStartedEvent)
+                def handle_agent_execution_started(source, event: AgentExecutionStartedEvent):
+                    self._handle_agent_execution_started(event)
+                
+                @crewai_event_bus.on(AgentExecutionCompletedEvent)
+                def handle_agent_execution_completed(source, event: AgentExecutionCompletedEvent):
+                    self._handle_agent_execution_completed(event)
+            
+            # Register flow event handlers if available
+            if flow_events_available:
+                @crewai_event_bus.on(FlowStartedEvent)
+                def handle_flow_started(source, event: FlowStartedEvent):
+                    self._handle_flow_started(event)
+                
+                @crewai_event_bus.on(FlowFinishedEvent)
+                def handle_flow_finished(source, event: FlowFinishedEvent):
+                    self._handle_flow_finished(event)
+            
+            # Register crew training/test handlers if available
+            if crew_events_available:
+                @crewai_event_bus.on(CrewTrainStartedEvent)
+                def handle_train_started(source, event: CrewTrainStartedEvent):
+                    self._handle_train_started(event)
+                
+                @crewai_event_bus.on(CrewTrainCompletedEvent)
+                def handle_train_completed(source, event: CrewTrainCompletedEvent):
+                    self._handle_train_completed(event)
+                
+                @crewai_event_bus.on(CrewTestStartedEvent)
+                def handle_test_started(source, event: CrewTestStartedEvent):
+                    self._handle_test_started(event)
+                
+                @crewai_event_bus.on(CrewTestCompletedEvent)
+                def handle_test_completed(source, event: CrewTestCompletedEvent):
+                    self._handle_test_completed(event)
+            
             # Store handler references for cleanup
             self.registered_handlers = [
                 handle_tool_started,
@@ -455,6 +699,55 @@ class CrewAIEventBusListener:
                 handle_knowledge_query_started,
                 handle_knowledge_query_completed
             ]
+            
+            # Add LLM handlers if available
+            if llm_events_available:
+                self.registered_handlers.extend([
+                    handle_llm_started,
+                    handle_llm_completed,
+                    handle_llm_failed,
+                    handle_guardrail_started,
+                    handle_guardrail_completed
+                ])
+            
+            # Add reasoning handlers if available
+            if reasoning_events_available:
+                self.registered_handlers.extend([
+                    handle_reasoning_started,
+                    handle_reasoning_completed,
+                    handle_reasoning_failed,
+                    handle_agent_execution_started,
+                    handle_agent_execution_completed
+                ])
+            
+            # Add flow handlers if available
+            if flow_events_available:
+                self.registered_handlers.extend([
+                    handle_flow_started,
+                    handle_flow_finished
+                ])
+            
+            # Add crew handlers if available
+            if crew_events_available:
+                self.registered_handlers.extend([
+                    handle_train_started,
+                    handle_train_completed,
+                    handle_test_started,
+                    handle_test_completed
+                ])
+            
+            # Add debug logging for all events if debug mode
+            if logger.isEnabledFor(logging.DEBUG):
+                try:
+                    # Register a catch-all debug handler for any event
+                    @crewai_event_bus.on(None)  # None means catch all events
+                    def debug_all_events(source, event):
+                        logger.debug(f"CrewAI Event Emitted: {type(event).__name__} - {event}")
+                    
+                    self.registered_handlers.append(debug_all_events)
+                except:
+                    # If catch-all doesn't work, just log what we registered
+                    logger.debug(f"Registered handlers for: {[h.__name__ for h in self.registered_handlers]}")
             
             logger.info("Successfully registered CrewAI event bus handlers")
             return True
@@ -521,33 +814,43 @@ class CrewAIEventBusListener:
             
             if self._is_mcp_tool(event):
                 # Emit MCP_CALL_START
+                # Convert tool_args to dict format for MCP request
+                tool_args = getattr(event, 'tool_args', {})
+                if isinstance(tool_args, str):
+                    request_data = {"input": tool_args}
+                elif isinstance(tool_args, dict):
+                    request_data = tool_args
+                else:
+                    request_data = {"input": str(tool_args)}
+                
                 mcp_event = self.event_builder.create_mcp_call_start(
                     server_name=event.tool_name,
-                    method_name="execute",
-                    arguments=self._serialize_tool_args(event.tool_args),
+                    server_url="mcp://local",  # Default URL for local MCP tools
+                    operation="tool_execution",
+                    method="execute",
+                    request=request_data,
+                    protocol_version="1.0",
                     agent_id=agent_id,
-                    agent_name=agent_name,
-                    metadata={
-                        "tool_class": str(event.tool_class) if event.tool_class else None,
-                        "run_attempts": event.run_attempts,
-                        "task_name": event.task_name,
-                        "framework": "crewai"
-                    }
+                    agent_name=agent_name
                 )
                 self.wrapper._send_event_sync(mcp_event)
             else:
                 # Emit TOOL_CALL_START
+                # Convert tool_args to dict format for arguments parameter
+                tool_args = getattr(event, 'tool_args', {})
+                if isinstance(tool_args, str):
+                    arguments = {"input": tool_args}
+                elif isinstance(tool_args, dict):
+                    arguments = tool_args
+                else:
+                    arguments = {"input": str(tool_args)}
+                
                 tool_event = self.event_builder.create_tool_call_start(
                     tool_name=event.tool_name,
-                    tool_args=self._serialize_tool_args(event.tool_args),
+                    arguments=arguments,
+                    call_id=str(getattr(event, 'id', None)) if hasattr(event, 'id') else None,
                     agent_id=agent_id,
-                    agent_name=agent_name,
-                    metadata={
-                        "tool_class": str(event.tool_class) if event.tool_class else None,
-                        "run_attempts": event.run_attempts,
-                        "task_name": event.task_name,
-                        "framework": "crewai"
-                    }
+                    agent_name=agent_name
                 )
                 self.wrapper._send_event_sync(tool_event)
         except Exception as e:
@@ -566,33 +869,35 @@ class CrewAIEventBusListener:
             
             if self._is_mcp_tool(event):
                 # Emit MCP_CALL_END
+                # Format response data
+                output = getattr(event, 'output', None)
+                if output is not None:
+                    response_data = {"result": str(output)}
+                else:
+                    response_data = {}
+                
                 mcp_event = self.event_builder.create_mcp_call_end(
                     server_name=event.tool_name,
-                    method_name="execute",
-                    response=str(event.output) if hasattr(event, 'output') else None,
-                    success=True,
+                    server_url="mcp://local",
+                    operation="tool_execution",
+                    method="execute",
+                    response=response_data,
+                    execution_time_ms=duration_ms,
+                    error=None,
                     agent_id=agent_id,
-                    agent_name=agent_name,
-                    metadata={
-                        "from_cache": getattr(event, 'from_cache', False),
-                        "duration_ms": duration_ms,
-                        "framework": "crewai"
-                    }
+                    agent_name=agent_name
                 )
                 self.wrapper._send_event_sync(mcp_event)
             else:
                 # Emit TOOL_CALL_END
                 tool_event = self.event_builder.create_tool_call_end(
                     tool_name=event.tool_name,
-                    tool_output=str(event.output) if hasattr(event, 'output') else None,
-                    success=True,
+                    call_id=str(getattr(event, 'id', None)) if hasattr(event, 'id') else None,
+                    output=str(event.output) if hasattr(event, 'output') else None,
+                    error=None,
+                    execution_time_ms=duration_ms,
                     agent_id=agent_id,
-                    agent_name=agent_name,
-                    metadata={
-                        "from_cache": getattr(event, 'from_cache', False),
-                        "duration_ms": duration_ms,
-                        "framework": "crewai"
-                    }
+                    agent_name=agent_name
                 )
                 self.wrapper._send_event_sync(tool_event)
         except Exception as e:
@@ -608,23 +913,26 @@ class CrewAIEventBusListener:
                 # Emit MCP_CALL_END with error
                 mcp_event = self.event_builder.create_mcp_call_end(
                     server_name=event.tool_name,
-                    method_name="execute",
-                    success=False,
-                    error_message=error_msg,
+                    server_url="mcp://local",
+                    operation="tool_execution",
+                    method="execute",
+                    response={"error": error_msg},
+                    execution_time_ms=None,
+                    error=error_msg,
                     agent_id=agent_id,
-                    agent_name=agent_name,
-                    metadata={"framework": "crewai"}
+                    agent_name=agent_name
                 )
                 self.wrapper._send_event_sync(mcp_event)
             else:
                 # Emit TOOL_CALL_END with error
                 tool_event = self.event_builder.create_tool_call_end(
                     tool_name=event.tool_name,
-                    success=False,
-                    error_message=error_msg,
+                    call_id=str(getattr(event, 'id', None)) if hasattr(event, 'id') else None,
+                    output=None,
+                    error=error_msg,
+                    execution_time_ms=None,
                     agent_id=agent_id,
-                    agent_name=agent_name,
-                    metadata={"framework": "crewai"}
+                    agent_name=agent_name
                 )
                 self.wrapper._send_event_sync(tool_event)
         except Exception as e:
@@ -641,12 +949,7 @@ class CrewAIEventBusListener:
                 error_code="TOOL_EXECUTION_ERROR",
                 recoverable=True,
                 agent_id=agent_id,
-                agent_name=agent_name,
-                metadata={
-                    "tool_name": event.tool_name,
-                    "tool_args": str(event.tool_args) if hasattr(event, 'tool_args') else None,
-                    "framework": "crewai"
-                }
+                agent_name=agent_name
             )
             self.wrapper._send_event_sync(error_event)
         except Exception as e:
@@ -670,11 +973,7 @@ class CrewAIEventBusListener:
             error_event = self.event_builder.create_error(
                 error_message=str(event.error) if hasattr(event, 'error') else "Task execution failed",
                 error_code="TASK_FAILED",
-                recoverable=True,
-                metadata={
-                    "task": str(getattr(event, 'task', None)),
-                    "framework": "crewai"
-                }
+                recoverable=True
             )
             self.wrapper._send_event_sync(error_event)
         except Exception as e:
@@ -692,11 +991,7 @@ class CrewAIEventBusListener:
                 error_code="AGENT_EXECUTION_ERROR",
                 recoverable=True,
                 agent_id=agent_id,
-                agent_name=agent_name,
-                metadata={
-                    "task": str(getattr(event, 'task', None)),
-                    "framework": "crewai"
-                }
+                agent_name=agent_name
             )
             self.wrapper._send_event_sync(error_event)
         except Exception as e:
@@ -710,14 +1005,12 @@ class CrewAIEventBusListener:
             
             # Emit DATA_ACCESS event
             data_event = self.event_builder.create_data_access(
-                data_source="knowledge_base",
-                operation="retrieval_start",
+                datasource="knowledge_base",
+                document_ids=None,
+                chunk_ids=None,
+                pii_categories=None,
                 agent_id=agent_id,
-                agent_name=agent_name,
-                metadata={
-                    "query": str(getattr(event, 'query', None)),
-                    "framework": "crewai"
-                }
+                agent_name=agent_name
             )
             self.wrapper._send_event_sync(data_event)
         except Exception as e:
@@ -728,16 +1021,19 @@ class CrewAIEventBusListener:
         try:
             agent_id, agent_name = self._extract_agent_context(event)
             
+            # Extract document IDs if available
+            doc_ids = None
+            if hasattr(event, 'document_ids'):
+                doc_ids = list(event.document_ids) if event.document_ids else None
+            
             # Emit DATA_ACCESS event
             data_event = self.event_builder.create_data_access(
-                data_source="knowledge_base",
-                operation="retrieval_complete",
+                datasource="knowledge_base",
+                document_ids=doc_ids,
+                chunk_ids=None,
+                pii_categories=None,
                 agent_id=agent_id,
-                agent_name=agent_name,
-                metadata={
-                    "results_count": getattr(event, 'results_count', None),
-                    "framework": "crewai"
-                }
+                agent_name=agent_name
             )
             self.wrapper._send_event_sync(data_event)
         except Exception as e:
@@ -750,14 +1046,12 @@ class CrewAIEventBusListener:
             
             # Emit DATA_ACCESS event
             data_event = self.event_builder.create_data_access(
-                data_source="knowledge_base",
-                operation="query_start",
+                datasource="knowledge_base",
+                document_ids=None,
+                chunk_ids=None,
+                pii_categories=None,
                 agent_id=agent_id,
-                agent_name=agent_name,
-                metadata={
-                    "query": str(getattr(event, 'query', None)),
-                    "framework": "crewai"
-                }
+                agent_name=agent_name
             )
             self.wrapper._send_event_sync(data_event)
         except Exception as e:
@@ -768,17 +1062,356 @@ class CrewAIEventBusListener:
         try:
             agent_id, agent_name = self._extract_agent_context(event)
             
+            # Extract chunk IDs if available
+            chunk_ids = None
+            if hasattr(event, 'chunk_ids'):
+                chunk_ids = list(event.chunk_ids) if event.chunk_ids else None
+            
             # Emit DATA_ACCESS event
             data_event = self.event_builder.create_data_access(
-                data_source="knowledge_base",
-                operation="query_complete",
+                datasource="knowledge_base",
+                document_ids=None,
+                chunk_ids=chunk_ids,
+                pii_categories=None,
                 agent_id=agent_id,
-                agent_name=agent_name,
-                metadata={
-                    "success": getattr(event, 'success', True),
-                    "framework": "crewai"
-                }
+                agent_name=agent_name
             )
             self.wrapper._send_event_sync(data_event)
         except Exception as e:
             logger.error(f"Error handling knowledge query completed: {e}")
+    
+    # LLM event handlers for MODEL_INVOCATION events
+    def _handle_llm_started(self, event):
+        """Handle LLM call started event."""
+        logger.info(f"🎯 _handle_llm_started called with event type: {type(event).__name__}")
+        try:
+            agent_id, agent_name = self._extract_agent_context(event)
+            
+            # Extract LLM details
+            provider = getattr(event, 'provider', 'unknown')
+            model = getattr(event, 'model', 'unknown')
+            messages = getattr(event, 'messages', [])
+            temperature = getattr(event, 'temperature', None)
+            max_tokens = getattr(event, 'max_tokens', None)
+            tools = getattr(event, 'tools', None)
+            
+            logger.info(f"Creating MODEL_INVOCATION_START: provider={provider}, model={model}")
+            
+            # Emit MODEL_INVOCATION_START
+            llm_event = self.event_builder.create_model_invocation_start(
+                provider=provider,
+                model=model,
+                messages=messages if isinstance(messages, list) else [],
+                agent_id=agent_id,
+                agent_name=agent_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools
+            )
+            self.wrapper._send_event_sync(llm_event)
+            logger.info("✓ MODEL_INVOCATION_START event sent successfully")
+        except Exception as e:
+            logger.error(f"Error handling LLM started event: {e}", exc_info=True)
+    
+    def _handle_llm_completed(self, event):
+        """Handle LLM call completed event."""
+        try:
+            agent_id, agent_name = self._extract_agent_context(event)
+            
+            # Extract LLM response details
+            provider = getattr(event, 'provider', 'unknown')
+            model = getattr(event, 'model', 'unknown')
+            response_content = getattr(event, 'response', None)
+            tool_calls = getattr(event, 'tool_calls', None)
+            finish_reason = getattr(event, 'finish_reason', None)
+            prompt_tokens = getattr(event, 'prompt_tokens', None)
+            completion_tokens = getattr(event, 'completion_tokens', None)
+            total_tokens = getattr(event, 'total_tokens', None)
+            duration_ms = None
+            
+            # Calculate duration if timestamps available
+            if hasattr(event, 'started_at') and hasattr(event, 'completed_at'):
+                duration = event.completed_at - event.started_at
+                duration_ms = duration.total_seconds() * 1000
+            
+            # Emit MODEL_INVOCATION_END
+            llm_event = self.event_builder.create_model_invocation_end(
+                provider=provider,
+                model=model,
+                response_content=str(response_content) if response_content else None,
+                tool_calls=tool_calls,
+                finish_reason=finish_reason,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                duration_ms=duration_ms,
+                agent_id=agent_id,
+                agent_name=agent_name,
+                error=None
+            )
+            self.wrapper._send_event_sync(llm_event)
+        except Exception as e:
+            logger.error(f"Error handling LLM completed event: {e}")
+    
+    def _handle_llm_failed(self, event):
+        """Handle LLM call failed event."""
+        try:
+            agent_id, agent_name = self._extract_agent_context(event)
+            
+            # Extract error details
+            provider = getattr(event, 'provider', 'unknown')
+            model = getattr(event, 'model', 'unknown')
+            error_msg = str(event.error) if hasattr(event, 'error') else "LLM call failed"
+            
+            # Emit MODEL_INVOCATION_END with error
+            llm_event = self.event_builder.create_model_invocation_end(
+                provider=provider,
+                model=model,
+                response_content=None,
+                tool_calls=None,
+                finish_reason="error",
+                agent_id=agent_id,
+                agent_name=agent_name,
+                error=error_msg
+            )
+            self.wrapper._send_event_sync(llm_event)
+        except Exception as e:
+            logger.error(f"Error handling LLM failed event: {e}")
+    
+    # Guardrail event handlers for POLICY_DECISION events
+    def _handle_guardrail_started(self, event):
+        """Handle LLM guardrail started event."""
+        try:
+            agent_id, agent_name = self._extract_agent_context(event)
+            
+            # Extract guardrail details
+            policy_id = getattr(event, 'guardrail_id', 'unknown')
+            rule_ids = getattr(event, 'rules', [])
+            
+            # Emit POLICY_DECISION event (as started)
+            policy_event = self.event_builder.create_policy_decision(
+                policy_id=str(policy_id),
+                outcome="evaluating",
+                rule_ids=[str(r) for r in rule_ids] if rule_ids else [],
+                rationale="Guardrail evaluation started",
+                agent_id=agent_id,
+                agent_name=agent_name
+            )
+            self.wrapper._send_event_sync(policy_event)
+        except Exception as e:
+            logger.error(f"Error handling guardrail started event: {e}")
+    
+    def _handle_guardrail_completed(self, event):
+        """Handle LLM guardrail completed event."""
+        try:
+            agent_id, agent_name = self._extract_agent_context(event)
+            
+            # Extract guardrail results
+            policy_id = getattr(event, 'guardrail_id', 'unknown')
+            outcome = getattr(event, 'outcome', 'unknown')
+            rule_ids = getattr(event, 'triggered_rules', [])
+            rationale = getattr(event, 'reason', None)
+            
+            # Emit POLICY_DECISION event
+            policy_event = self.event_builder.create_policy_decision(
+                policy_id=str(policy_id),
+                outcome=str(outcome),
+                rule_ids=[str(r) for r in rule_ids] if rule_ids else [],
+                rationale=rationale,
+                agent_id=agent_id,
+                agent_name=agent_name
+            )
+            self.wrapper._send_event_sync(policy_event)
+        except Exception as e:
+            logger.error(f"Error handling guardrail completed event: {e}")
+    
+    # Reasoning event handlers for STATE_UPDATE events
+    def _handle_reasoning_started(self, event):
+        """Handle agent reasoning started event."""
+        try:
+            agent_id, agent_name = self._extract_agent_context(event)
+            
+            # Emit STATE_UPDATE event
+            state_event = self.event_builder.create_state_update(
+                state_data={
+                    "reasoning_status": "started",
+                    "task": str(getattr(event, 'task', None)),
+                    "context": str(getattr(event, 'context', None))[:500] if hasattr(event, 'context') else None
+                },
+                agent_id=agent_id,
+                agent_name=agent_name
+            )
+            self.wrapper._send_event_sync(state_event)
+        except Exception as e:
+            logger.error(f"Error handling reasoning started event: {e}")
+    
+    def _handle_reasoning_completed(self, event):
+        """Handle agent reasoning completed event."""
+        try:
+            agent_id, agent_name = self._extract_agent_context(event)
+            
+            # Emit STATE_UPDATE event
+            state_event = self.event_builder.create_state_update(
+                state_data={
+                    "reasoning_status": "completed",
+                    "result": str(getattr(event, 'result', None))[:500] if hasattr(event, 'result') else None,
+                    "decisions": getattr(event, 'decisions', [])
+                },
+                agent_id=agent_id,
+                agent_name=agent_name
+            )
+            self.wrapper._send_event_sync(state_event)
+        except Exception as e:
+            logger.error(f"Error handling reasoning completed event: {e}")
+    
+    def _handle_reasoning_failed(self, event):
+        """Handle agent reasoning failed event."""
+        try:
+            agent_id, agent_name = self._extract_agent_context(event)
+            
+            # Emit ERROR event
+            error_event = self.event_builder.create_error(
+                error_message=str(event.error) if hasattr(event, 'error') else "Agent reasoning failed",
+                error_code="REASONING_FAILED",
+                recoverable=True,
+                agent_id=agent_id,
+                agent_name=agent_name
+            )
+            self.wrapper._send_event_sync(error_event)
+        except Exception as e:
+            logger.error(f"Error handling reasoning failed event: {e}")
+    
+    # Enhanced agent execution handlers with handoff detection
+    def _handle_agent_execution_started(self, event):
+        """Handle agent execution started event - track for handoffs."""
+        try:
+            agent_id, agent_name = self._extract_agent_context(event)
+            
+            # Check if this is a handoff (different agent than last one)
+            if hasattr(self.wrapper, '_last_active_agent') and self.wrapper._last_active_agent:
+                last_agent_id, last_agent_name = self.wrapper._last_active_agent
+                if agent_id != last_agent_id:
+                    # Emit AGENT_HANDOFF event
+                    handoff_event = self.event_builder.create_agent_handoff(
+                        from_agent_id=last_agent_id,
+                        from_agent_name=last_agent_name,
+                        to_agent_id=agent_id,
+                        to_agent_name=agent_name,
+                        reason="Task delegation",
+                        handoff_type="sequential",
+                        handoff_data={
+                            "task": str(getattr(event, 'task', None)),
+                            "context": str(getattr(event, 'context', None))[:500] if hasattr(event, 'context') else None
+                        }
+                    )
+                    self.wrapper._send_event_sync(handoff_event)
+            
+            # Update last active agent
+            self.wrapper._last_active_agent = (agent_id, agent_name)
+            
+        except Exception as e:
+            logger.error(f"Error handling agent execution started: {e}")
+    
+    def _handle_agent_execution_completed(self, event):
+        """Handle agent execution completed event."""
+        # Already handled in main agent end event
+        pass
+    
+    # Flow event handlers for SYSTEM events
+    def _handle_flow_started(self, event):
+        """Handle flow started event."""
+        try:
+            # Emit SYSTEM event
+            system_event = self.event_builder.create_system_event(
+                message=f"Flow started: {getattr(event, 'flow_name', 'unknown')}",
+                metadata={
+                    "flow_name": getattr(event, 'flow_name', None),
+                    "flow_id": getattr(event, 'flow_id', None),
+                    "framework": "crewai"
+                }
+            )
+            self.wrapper._send_event_sync(system_event)
+        except Exception as e:
+            logger.error(f"Error handling flow started event: {e}")
+    
+    def _handle_flow_finished(self, event):
+        """Handle flow finished event."""
+        try:
+            # Emit SYSTEM event
+            system_event = self.event_builder.create_system_event(
+                message=f"Flow finished: {getattr(event, 'flow_name', 'unknown')}",
+                metadata={
+                    "flow_name": getattr(event, 'flow_name', None),
+                    "flow_id": getattr(event, 'flow_id', None),
+                    "success": getattr(event, 'success', True),
+                    "framework": "crewai"
+                }
+            )
+            self.wrapper._send_event_sync(system_event)
+        except Exception as e:
+            logger.error(f"Error handling flow finished event: {e}")
+    
+    # Crew training/test event handlers
+    def _handle_train_started(self, event):
+        """Handle crew training started event."""
+        try:
+            # Emit SYSTEM event
+            system_event = self.event_builder.create_system_event(
+                message="Crew training started",
+                metadata={
+                    "crew_name": getattr(event, 'crew_name', None),
+                    "training_data_size": getattr(event, 'data_size', None),
+                    "framework": "crewai"
+                }
+            )
+            self.wrapper._send_event_sync(system_event)
+        except Exception as e:
+            logger.error(f"Error handling training started event: {e}")
+    
+    def _handle_train_completed(self, event):
+        """Handle crew training completed event."""
+        try:
+            # Emit SYSTEM event
+            system_event = self.event_builder.create_system_event(
+                message="Crew training completed",
+                metadata={
+                    "crew_name": getattr(event, 'crew_name', None),
+                    "metrics": getattr(event, 'metrics', {}),
+                    "framework": "crewai"
+                }
+            )
+            self.wrapper._send_event_sync(system_event)
+        except Exception as e:
+            logger.error(f"Error handling training completed event: {e}")
+    
+    def _handle_test_started(self, event):
+        """Handle crew test started event."""
+        try:
+            # Emit SYSTEM event
+            system_event = self.event_builder.create_system_event(
+                message="Crew test started",
+                metadata={
+                    "crew_name": getattr(event, 'crew_name', None),
+                    "test_cases": getattr(event, 'test_cases', None),
+                    "framework": "crewai"
+                }
+            )
+            self.wrapper._send_event_sync(system_event)
+        except Exception as e:
+            logger.error(f"Error handling test started event: {e}")
+    
+    def _handle_test_completed(self, event):
+        """Handle crew test completed event."""
+        try:
+            # Emit SYSTEM event
+            system_event = self.event_builder.create_system_event(
+                message="Crew test completed",
+                metadata={
+                    "crew_name": getattr(event, 'crew_name', None),
+                    "test_results": getattr(event, 'results', {}),
+                    "framework": "crewai"
+                }
+            )
+            self.wrapper._send_event_sync(system_event)
+        except Exception as e:
+            logger.error(f"Error handling test completed event: {e}")

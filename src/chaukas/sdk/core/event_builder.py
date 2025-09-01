@@ -41,6 +41,7 @@ class EventBuilder:
         author: Author = Author.AUTHOR_SYSTEM,
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None,
+        parent_span_id: Optional[str] = None,  # Allow explicit parent override
     ) -> Event:
         """
         Create base event with common fields populated.
@@ -66,11 +67,19 @@ class EventBuilder:
         # Distributed tracing context
         event.session_id = _session_id.get() or generate_uuid7()
         event.trace_id = _trace_id.get() or generate_uuid7()
-        event.span_id = _span_id.get() or generate_uuid7()
+        # IMPORTANT: Each event gets its own unique span_id
+        # This ensures proper distributed tracing with unique identifiers per event
+        event.span_id = generate_uuid7()
         
-        parent_span = _parent_span_id.get()
-        if parent_span:
-            event.parent_span_id = parent_span
+        # Parent span can be explicitly provided or comes from context
+        if parent_span_id:
+            # Use explicitly provided parent
+            event.parent_span_id = parent_span_id
+        else:
+            # Use context parent (the currently active span)
+            parent_span = _parent_span_id.get()
+            if parent_span:
+                event.parent_span_id = parent_span
         
         # Event metadata
         event.type = event_type
@@ -110,6 +119,9 @@ class EventBuilder:
             author=Author.AUTHOR_SYSTEM,
         )
         
+        # SESSION_START is always a root event - clear any parent_span_id
+        event.ClearField('parent_span_id')
+        
         if session_id:
             event.session_id = session_id
         
@@ -129,6 +141,9 @@ class EventBuilder:
             status=EventStatus.EVENT_STATUS_COMPLETED,
             author=Author.AUTHOR_SYSTEM,
         )
+        
+        # SESSION_END is always a root event - clear any parent_span_id
+        event.ClearField('parent_span_id')
         
         if session_id:
             event.session_id = session_id
