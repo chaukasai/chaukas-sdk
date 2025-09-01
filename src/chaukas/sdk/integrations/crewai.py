@@ -473,6 +473,10 @@ class CrewAIEventBusListener:
         self._tool_call_spans = {}  # Map tool call_id to span_id
         self._mcp_call_spans = {}  # Track active MCP calls
         self._llm_call_counter = 0  # Counter for unique LLM call IDs
+        # Track retry attempts
+        self._llm_retry_attempts = {}  # Track retry attempts for LLM calls
+        self._tool_retry_attempts = {}  # Track retry attempts for tool calls
+        self._task_retry_attempts = {}  # Track retry attempts for task executions
         
     def register_handlers(self):
         """Register event handlers with CrewAI's event bus."""
@@ -893,6 +897,10 @@ class CrewAIEventBusListener:
         try:
             agent_id, agent_name = self._extract_agent_context(event)
             
+            # Clear retry counter on successful completion
+            tool_key = f"{agent_id}_{event.tool_name}"
+            self._tool_retry_attempts.pop(tool_key, None)
+            
             # Calculate duration if timestamps available
             duration_ms = None
             if hasattr(event, 'started_at') and hasattr(event, 'finished_at'):
@@ -950,6 +958,26 @@ class CrewAIEventBusListener:
             agent_id, agent_name = self._extract_agent_context(event)
             error_msg = str(event.error) if hasattr(event, 'error') else "Tool execution failed"
             
+            # Track retry attempts for this tool
+            tool_key = f"{agent_id}_{event.tool_name}"
+            retry_count = self._tool_retry_attempts.get(tool_key, 0)
+            self._tool_retry_attempts[tool_key] = retry_count + 1
+            
+            # Check if this is a retryable error and emit RETRY event
+            if self._is_retryable_error(error_msg) and retry_count < 2:  # Max 2 retries for tools
+                retry_event = self.event_builder.create_retry(
+                    attempt=retry_count + 1,
+                    strategy="linear",
+                    backoff_ms=500 * (retry_count + 1),  # Linear backoff
+                    reason=f"Tool execution failed: {error_msg} (attempt {retry_count + 1}/2)",
+                    agent_id=agent_id,
+                    agent_name=agent_name
+                )
+                self.wrapper._send_event_sync(retry_event)
+            else:
+                # Clear retry counter on final failure
+                self._tool_retry_attempts.pop(tool_key, None)
+            
             if self._is_mcp_tool(event):
                 # Emit MCP_CALL_END with error
                 mcp_event = self.event_builder.create_mcp_call_end(
@@ -1004,17 +1032,51 @@ class CrewAIEventBusListener:
     
     def _handle_task_completed(self, event):
         """Handle task completed event."""
+        # Clear retry counter on successful completion
+        try:
+            agent_id, agent_name = self._extract_agent_context(event)
+            task_id = str(getattr(event, 'task_id', getattr(event, 'task', 'unknown')))
+            task_key = f"{agent_id}_{task_id}"
+            self._task_retry_attempts.pop(task_key, None)
+        except:
+            pass
         # We already capture this in agent_end, so just log for debugging
         logger.debug(f"Task completed: {getattr(event, 'task', 'unknown')}")
     
     def _handle_task_failed(self, event):
         """Handle task failed event."""
         try:
+            agent_id, agent_name = self._extract_agent_context(event)
+            error_msg = str(event.error) if hasattr(event, 'error') else "Task execution failed"
+            
+            # Track retry attempts for this task
+            task_id = str(getattr(event, 'task_id', getattr(event, 'task', 'unknown')))
+            task_key = f"{agent_id}_{task_id}"
+            retry_count = self._task_retry_attempts.get(task_key, 0)
+            self._task_retry_attempts[task_key] = retry_count + 1
+            
+            # Check if this is a retryable error and emit RETRY event
+            if self._is_retryable_error(error_msg) and retry_count < 3:  # Max 3 retries for tasks
+                retry_event = self.event_builder.create_retry(
+                    attempt=retry_count + 1,
+                    strategy="exponential",
+                    backoff_ms=2000 * (2 ** retry_count),  # Exponential backoff starting at 2s
+                    reason=f"Task execution failed: {error_msg} (attempt {retry_count + 1}/3)",
+                    agent_id=agent_id,
+                    agent_name=agent_name
+                )
+                self.wrapper._send_event_sync(retry_event)
+            else:
+                # Clear retry counter on final failure
+                self._task_retry_attempts.pop(task_key, None)
+            
             # Emit ERROR event for task failure
             error_event = self.event_builder.create_error(
-                error_message=str(event.error) if hasattr(event, 'error') else "Task execution failed",
+                error_message=error_msg,
                 error_code="TASK_FAILED",
-                recoverable=True
+                recoverable=True,
+                agent_id=agent_id,
+                agent_name=agent_name
             )
             self.wrapper._send_event_sync(error_event)
         except Exception as e:
@@ -1025,10 +1087,24 @@ class CrewAIEventBusListener:
         """Handle agent execution error event."""
         try:
             agent_id, agent_name = self._extract_agent_context(event)
+            error_msg = str(event.error) if hasattr(event, 'error') else "Agent execution error"
+            
+            # Check if this looks like a retry scenario
+            if self._is_retryable_error(error_msg):
+                # Emit a RETRY event for agent-level retries
+                retry_event = self.event_builder.create_retry(
+                    attempt=1,  # Agent errors typically retry once
+                    strategy="immediate",
+                    backoff_ms=0,
+                    reason=f"Agent execution error: {error_msg} (attempt 1/1)",
+                    agent_id=agent_id,
+                    agent_name=agent_name
+                )
+                self.wrapper._send_event_sync(retry_event)
             
             # Emit ERROR event
             error_event = self.event_builder.create_error(
-                error_message=str(event.error) if hasattr(event, 'error') else "Agent execution error",
+                error_message=error_msg,
                 error_code="AGENT_EXECUTION_ERROR",
                 recoverable=True,
                 agent_id=agent_id,
@@ -1173,6 +1249,12 @@ class CrewAIEventBusListener:
         try:
             agent_id, agent_name = self._extract_agent_context(event)
             
+            # Clear retry counter on successful completion
+            provider = getattr(event, 'provider', 'unknown')
+            model = getattr(event, 'model', 'unknown')
+            llm_key = f"{agent_id}_{model}_{provider}"
+            self._llm_retry_attempts.pop(llm_key, None)
+            
             # Extract LLM response details
             provider = getattr(event, 'provider', 'unknown')
             model = getattr(event, 'model', 'unknown')
@@ -1238,6 +1320,26 @@ class CrewAIEventBusListener:
             provider = getattr(event, 'provider', 'unknown')
             model = getattr(event, 'model', 'unknown')
             error_msg = str(event.error) if hasattr(event, 'error') else "LLM call failed"
+            
+            # Track retry attempts for this LLM call
+            llm_key = f"{agent_id}_{model}_{provider}"
+            retry_count = self._llm_retry_attempts.get(llm_key, 0)
+            self._llm_retry_attempts[llm_key] = retry_count + 1
+            
+            # Check if this is a retryable error and emit RETRY event
+            if self._is_retryable_error(error_msg) and retry_count < 3:  # Max 3 retries
+                retry_event = self.event_builder.create_retry(
+                    attempt=retry_count + 1,
+                    strategy="exponential",
+                    backoff_ms=1000 * (2 ** retry_count),  # Exponential backoff
+                    reason=f"LLM call failed: {error_msg} (attempt {retry_count + 1}/3)",
+                    agent_id=agent_id,
+                    agent_name=agent_name
+                )
+                self.wrapper._send_event_sync(retry_event)
+            else:
+                # Clear retry counter on final failure
+                self._llm_retry_attempts.pop(llm_key, None)
             
             # Emit MODEL_INVOCATION_END with error
             llm_event = self.event_builder.create_model_invocation_end(
@@ -1491,3 +1593,19 @@ class CrewAIEventBusListener:
             self.wrapper._send_event_sync(system_event)
         except Exception as e:
             logger.error(f"Error handling test completed event: {e}")
+    
+    def _is_retryable_error(self, error_msg: str) -> bool:
+        """Check if an error is retryable based on the error message."""
+        retryable_patterns = [
+            "rate limit",
+            "timeout",
+            "connection",
+            "temporary",
+            "503",
+            "429",
+            "network",
+            "unavailable"
+        ]
+        
+        error_lower = error_msg.lower()
+        return any(pattern in error_lower for pattern in retryable_patterns)
