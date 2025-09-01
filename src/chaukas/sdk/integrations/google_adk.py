@@ -53,14 +53,18 @@ class GoogleADKWrapper:
                     
                     await self.tracer.client.send_event(start_event)
                     
+                    # Store span_id for AGENT_END event
+                    agent_span_id = start_event.span_id
+                    
                     # Execute original method
                     result = await wrapped(*args, **kwargs)
                     
-                    # Send AGENT_END event
+                    # Send AGENT_END event with same span_id as START
                     end_event = self.event_builder.create_agent_end(
                         agent_id=agent_id,
                         agent_name=agent_name,
                         status=EventStatus.EVENT_STATUS_COMPLETED,
+                        span_id=agent_span_id,  # Use same span_id as AGENT_START
                         metadata={
                             "framework": "google_adk",
                             "result_type": type(result).__name__,
@@ -123,14 +127,18 @@ class GoogleADKWrapper:
                     
                     await self.tracer.client.send_event(start_event)
                     
+                    # Store span_id for MODEL_INVOCATION_END event
+                    model_span_id = start_event.span_id
+                    
                     # Execute original method
                     result = await wrapped(*args, **kwargs)
                     
-                    # Send MODEL_INVOCATION_END event
+                    # Send MODEL_INVOCATION_END event with same span_id
                     end_event = self.event_builder.create_model_invocation_end(
                         provider="google",
                         model=model,
                         response_content=str(result)[:1000] if result else None,
+                        span_id=model_span_id,  # Use same span_id as START
                         agent_id=agent_id,
                         agent_name=agent_name,
                         # Note: Token counts typically not available in Google ADK
@@ -147,6 +155,7 @@ class GoogleADKWrapper:
                     error_event = self.event_builder.create_model_invocation_end(
                         provider="google",
                         model=model,
+                        span_id=model_span_id if 'model_span_id' in locals() else None,  # Use same span if available
                         agent_id=agent_id,
                         agent_name=agent_name,
                         error=str(e)

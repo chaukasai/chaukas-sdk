@@ -52,14 +52,18 @@ class OpenAIAgentsWrapper:
                     
                     await self.tracer.client.send_event(start_event)
                     
+                    # Store span_id for AGENT_END event
+                    agent_span_id = start_event.span_id
+                    
                     # Execute original method
                     result = await wrapped(*args, **kwargs)
                     
-                    # Send AGENT_END event
+                    # Send AGENT_END event with same span_id as START
                     end_event = self.event_builder.create_agent_end(
                         agent_id=agent_id,
                         agent_name=agent_name,
                         status=EventStatus.EVENT_STATUS_COMPLETED,
+                        span_id=agent_span_id,  # Use same span_id as AGENT_START
                         metadata={
                             "result_type": type(result).__name__,
                             "messages_count": len(getattr(result, "messages", [])),
@@ -113,6 +117,9 @@ class OpenAIAgentsWrapper:
                 span.set_attribute("agent_name", agent_name)
                 
                 try:
+                    # Track MODEL_INVOCATION span
+                    model_span_id = None
+                    
                     # Send MODEL_INVOCATION_START event
                     if args and len(args) > 0:
                         messages = args[0] if isinstance(args[0], list) else []
@@ -130,11 +137,14 @@ class OpenAIAgentsWrapper:
                         )
                         
                         await self.tracer.client.send_event(start_event)
+                        
+                        # Store span_id for MODEL_INVOCATION_END event
+                        model_span_id = start_event.span_id
                     
                     # Execute original method
                     result = await wrapped(*args, **kwargs)
                     
-                    # Send MODEL_INVOCATION_END event
+                    # Send MODEL_INVOCATION_END event with same span_id
                     if result:
                         model = getattr(agent, "model", "unknown") if agent else "unknown"
                         
@@ -144,6 +154,7 @@ class OpenAIAgentsWrapper:
                             response_content=getattr(result, "content", None),
                             tool_calls=self._extract_tool_calls(result),
                             finish_reason=getattr(result, "finish_reason", None),
+                            span_id=model_span_id,  # Use same span_id as START
                             agent_id=agent_id,
                             agent_name=agent_name,
                             # Note: Token counts not readily available in OpenAI Agents
@@ -160,6 +171,7 @@ class OpenAIAgentsWrapper:
                     error_event = self.event_builder.create_model_invocation_end(
                         provider="openai",
                         model=model,
+                        span_id=model_span_id if 'model_span_id' in locals() else None,  # Use same span if available
                         agent_id=agent_id,
                         agent_name=agent_name,
                         error=str(e)

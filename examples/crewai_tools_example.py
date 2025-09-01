@@ -4,6 +4,10 @@ This example demonstrates tool usage and event capture.
 """
 
 import os
+
+# Disable CrewAI telemetry to prevent "Service Unavailable" errors
+os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
+
 from crewai import Agent, Task, Crew, Process
 from crewai.tools import tool
 

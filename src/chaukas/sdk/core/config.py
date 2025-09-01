@@ -19,7 +19,7 @@ class ChaukasConfig:
     api_key: str
     
     # Optional fields with defaults
-    batch_size: int = 100
+    batch_size: int = 20  # Reduced from 100 to prevent high memory usage
     flush_interval: float = 5.0
     timeout: float = 30.0
     
@@ -30,6 +30,11 @@ class ChaukasConfig:
     # Output configuration
     output_mode: str = "api"  # "api" or "file"
     output_file: Optional[str] = None
+    
+    # Advanced batching configuration
+    max_batch_bytes: int = 256 * 1024  # 256KB max per batch
+    min_batch_size: int = 1  # Minimum batch size for retry
+    enable_adaptive_batching: bool = True  # Enable size-based batching
     
     @classmethod
     def from_env(cls) -> "ChaukasConfig":
@@ -49,11 +54,14 @@ class ChaukasConfig:
         
         Optional environment variables:
         - CHAUKAS_OUTPUT_MODE (default: "api", options: "api", "file")
-        - CHAUKAS_BATCH_SIZE (default: 100)
+        - CHAUKAS_BATCH_SIZE (default: 20)
         - CHAUKAS_FLUSH_INTERVAL (default: 5.0)
         - CHAUKAS_TIMEOUT (default: 30.0)
         - CHAUKAS_BRANCH (default: None)
         - CHAUKAS_TAGS (comma-separated, default: None)
+        - CHAUKAS_MAX_BATCH_BYTES (default: 262144, i.e., 256KB)
+        - CHAUKAS_MIN_BATCH_SIZE (default: 1)
+        - CHAUKAS_ENABLE_ADAPTIVE_BATCHING (default: true)
         
         Raises:
             ValueError: If required environment variables are missing
@@ -91,10 +99,15 @@ class ChaukasConfig:
         
         # Optional fields
         # For file mode, use smaller batch size for more immediate writes
-        default_batch_size = "1" if output_mode == "file" else "100"
+        default_batch_size = "1" if output_mode == "file" else "20"
         batch_size = int(os.getenv("CHAUKAS_BATCH_SIZE", default_batch_size))
         flush_interval = float(os.getenv("CHAUKAS_FLUSH_INTERVAL", "5.0"))
         timeout = float(os.getenv("CHAUKAS_TIMEOUT", "30.0"))
+        
+        # Advanced batching configuration
+        max_batch_bytes = int(os.getenv("CHAUKAS_MAX_BATCH_BYTES", str(256 * 1024)))
+        min_batch_size = int(os.getenv("CHAUKAS_MIN_BATCH_SIZE", "1"))
+        enable_adaptive_batching = os.getenv("CHAUKAS_ENABLE_ADAPTIVE_BATCHING", "true").lower() in ["true", "1", "yes"]
         
         branch = os.getenv("CHAUKAS_BRANCH")
         
@@ -113,6 +126,9 @@ class ChaukasConfig:
             tags=tags,
             output_mode=output_mode,
             output_file=output_file,
+            max_batch_bytes=max_batch_bytes,
+            min_batch_size=min_batch_size,
+            enable_adaptive_batching=enable_adaptive_batching,
         )
     
     @classmethod
@@ -141,11 +157,16 @@ class ChaukasConfig:
             project_id=config["project_id"],
             endpoint=config["endpoint"],
             api_key=config["api_key"],
-            batch_size=config.get("batch_size", 100),
+            batch_size=config.get("batch_size", 20),
             flush_interval=config.get("flush_interval", 5.0),
             timeout=config.get("timeout", 30.0),
             branch=config.get("branch"),
             tags=config.get("tags"),
+            output_mode=config.get("output_mode", "api"),
+            output_file=config.get("output_file"),
+            max_batch_bytes=config.get("max_batch_bytes", 256 * 1024),
+            min_batch_size=config.get("min_batch_size", 1),
+            enable_adaptive_batching=config.get("enable_adaptive_batching", True),
         )
     
     def to_dict(self) -> Dict[str, Any]:
@@ -160,6 +181,11 @@ class ChaukasConfig:
             "timeout": self.timeout,
             "branch": self.branch,
             "tags": self.tags,
+            "output_mode": self.output_mode,
+            "output_file": self.output_file,
+            "max_batch_bytes": self.max_batch_bytes,
+            "min_batch_size": self.min_batch_size,
+            "enable_adaptive_batching": self.enable_adaptive_batching,
         }
 
 
