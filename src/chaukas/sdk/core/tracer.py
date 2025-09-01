@@ -88,8 +88,10 @@ class Span:
         # Set context variables
         self._session_token = _session_id.set(self.session_id)
         self._trace_token = _trace_id.set(self.trace_id)
+        # IMPORTANT: Set parent_span_id to THIS span's ID so child events use it as parent
+        # This ensures proper parent-child hierarchy for all events created within this span
+        self._parent_token = _parent_span_id.set(self.span_id)
         self._span_token = _span_id.set(self.span_id)
-        self._parent_token = _parent_span_id.set(self.parent_span_id)
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):

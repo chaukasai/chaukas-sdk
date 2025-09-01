@@ -11,9 +11,10 @@ from chaukas import sdk as chaukas
 
 # Set environment variables
 os.environ["CHAUKAS_TENANT_ID"] = "test_tenant_1"
-os.environ["CHAUKAS_PROJECT_ID"] = "tets_project_1"
+os.environ["CHAUKAS_PROJECT_ID"] = "test_project_1"
 os.environ["CHAUKAS_OUTPUT_MODE"] = "file"
 os.environ["CHAUKAS_OUTPUT_FILE"] = "crewai_output.jsonl"
+os.environ["CHAUKAS_BATCH_SIZE"] = "1"
 #os.environ["OPENAI_API_KEY"] = "your-openai-api-key"
 
 # Enable instrumentation - this will automatically detect and patch CrewAI
@@ -39,17 +40,18 @@ def main():
         verbose=True
     )
     
-    # Define tasks
+    # Define tasks with interpolated inputs
     task1 = Task(
-        description="""Conduct a comprehensive analysis of the latest advancements in AI in 2024.
+        description="""Conduct a comprehensive analysis of the latest advancements in {topic} in {year}.
+        Focus particularly on {focus_area}.
         Identify key trends, breakthrough technologies, and potential industry impacts.""",
-        expected_output="A comprehensive 3 paragraphs long report on the latest AI advancements in 2024.",
+        expected_output="A comprehensive 3 paragraphs long report on the latest {topic} advancements in {year}.",
         agent=researcher
     )
     
     task2 = Task(
         description="""Using the insights provided, develop an engaging blog post
-        that highlights the most significant AI advancements.""",
+        that highlights the most significant {topic} advancements in {focus_area}.""",
         expected_output="A compelling 4 paragraph blog post formatted as markdown.",
         agent=writer
     )
@@ -62,8 +64,16 @@ def main():
         process=Process.sequential
     )
     
-    # Execute crew - all agent interactions and task execution will be traced
-    result = crew.kickoff()
+    # Define inputs for the crew
+    inputs = {
+        "topic": "AI",
+        "year": "2024",
+        "focus_area": "healthcare and finance applications"
+    }
+    
+    # Execute crew with inputs - all agent interactions and INPUT_RECEIVED event will be traced
+    print(f"Starting crew with inputs: {inputs}")
+    result = crew.kickoff(inputs=inputs)
     
     print(f"Crew result: {result}")
 
