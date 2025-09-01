@@ -84,80 +84,87 @@ class CrewAIWrapper:
                 """Instrumented sync version of Crew.kickoff()."""
                 crew_data = _extract_crew_data(crew_instance, args, kwargs)
                 
-                with wrapper.tracer.start_span("crewai.crew.kickoff") as span:
-                    span.set_attribute("method", "kickoff")
-                    span.set_attribute("crew_name", crew_data['crew_name'])
-                    span.set_attribute("agents_count", len(crew_data['agents']))
+                # Reset last active agent for new crew execution
+                wrapper._last_active_agent = None
+                
+                # Track start time and metrics
+                wrapper._start_time = time.time()
+                wrapper._start_metrics = wrapper._get_performance_metrics()
+                
+                # Send session start event
+                session_start = self.event_builder.create_session_start(
+                    metadata={
+                        "crew_name": crew_data['crew_name'],
+                        "method": "kickoff",
+                        "framework": "crewai",
+                        "agents_count": len(crew_data['agents']),
+                        "tasks_count": len(crew_data['tasks']),
+                    }
+                )
+                wrapper._send_event_sync(session_start)
+                # Store session span_id for END event and as parent for execution events
+                wrapper._session_span_id = session_start.span_id
+                
+                # Set complete context for all subsequent events
+                # This ensures all events share the same session_id and trace_id
+                session_tokens = wrapper.tracer.set_session_context(session_start.session_id, session_start.trace_id)
+                parent_token = wrapper.tracer.set_parent_span_context(wrapper._session_span_id)
+                
+                try:
+                    # Send input received event if inputs provided (will use session as parent)
+                    if crew_data['inputs']:
+                        input_event = wrapper.event_builder.create_input_received(
+                            content=str(crew_data['inputs'])[:1000],
+                            metadata={"input_type": "crew_inputs", "method": "kickoff"}
+                        )
+                        wrapper._send_event_sync(input_event)
                     
-                    # Reset last active agent for new crew execution
-                    wrapper._last_active_agent = None
+                    # Execute original method
+                    result = wrapper._original_kickoff(crew_instance, *args, **kwargs)
                     
-                    # Track start time and metrics
-                    wrapper._start_time = time.time()
-                    wrapper._start_metrics = wrapper._get_performance_metrics()
+                    # Send output event
+                    output_event = wrapper.event_builder.create_output_emitted(
+                        content=str(result)[:1000] if result else "No result",
+                        metadata={"output_type": "crew_result", "method": "kickoff"}
+                    )
+                    wrapper._send_event_sync(output_event)
                     
-                    try:
-                        # Send session start event
-                        session_start = self.event_builder.create_session_start(
-                            metadata={
-                                "crew_name": crew_data['crew_name'],
-                                "method": "kickoff",
-                                "framework": "crewai",
-                                "agents_count": len(crew_data['agents']),
-                                "tasks_count": len(crew_data['tasks']),
-                            }
-                        )
-                        wrapper._send_event_sync(session_start)
+                    # Calculate performance metrics
+                    duration_ms = (time.time() - wrapper._start_time) * 1000 if wrapper._start_time else None
+                    end_metrics = wrapper._get_performance_metrics()
+                    token_estimate = wrapper._estimate_tokens(crew_data.get('inputs'), result)
+                    
+                    # Send session end event with enhanced metadata
+                    session_end = wrapper.event_builder.create_session_end(
+                        span_id=wrapper._session_span_id,  # Use same span_id as SESSION_START
+                        metadata={
+                            "crew_name": crew_data['crew_name'],
+                            "method": "kickoff",
+                            "success": True,
+                            "result_type": type(result).__name__,
+                            "duration_ms": duration_ms,
+                            "estimated_tokens": token_estimate,
+                            "cpu_percent": end_metrics.get('cpu_percent'),
+                            "memory_mb": end_metrics.get('memory_mb')
+                        }
+                    )
+                    wrapper._send_event_sync(session_end)
                         
-                        # Send input received event if inputs provided
-                        if crew_data['inputs']:
-                            input_event = wrapper.event_builder.create_input_received(
-                                content=str(crew_data['inputs'])[:1000],
-                                metadata={"input_type": "crew_inputs", "method": "kickoff"}
-                            )
-                            wrapper._send_event_sync(input_event)
-                        
-                        # Execute original method
-                        result = wrapper._original_kickoff(crew_instance, *args, **kwargs)
-                        
-                        # Send output event
-                        output_event = wrapper.event_builder.create_output_emitted(
-                            content=str(result)[:1000] if result else "No result",
-                            metadata={"output_type": "crew_result", "method": "kickoff"}
-                        )
-                        wrapper._send_event_sync(output_event)
-                        
-                        # Calculate performance metrics
-                        duration_ms = (time.time() - wrapper._start_time) * 1000 if wrapper._start_time else None
-                        end_metrics = wrapper._get_performance_metrics()
-                        token_estimate = wrapper._estimate_tokens(crew_data.get('inputs'), result)
-                        
-                        # Send session end event with enhanced metadata
-                        session_end = wrapper.event_builder.create_session_end(
-                            metadata={
-                                "crew_name": crew_data['crew_name'],
-                                "method": "kickoff",
-                                "success": True,
-                                "result_type": type(result).__name__,
-                                "duration_ms": duration_ms,
-                                "estimated_tokens": token_estimate,
-                                "cpu_percent": end_metrics.get('cpu_percent'),
-                                "memory_mb": end_metrics.get('memory_mb')
-                            }
-                        )
-                        wrapper._send_event_sync(session_end)
-                        
-                        return result
-                        
-                    except Exception as e:
-                        # Send error event
-                        error_event = wrapper.event_builder.create_error(
-                            error_message=str(e),
-                            error_code=type(e).__name__,
-                            recoverable=True,
-                        )
-                        wrapper._send_event_sync(error_event)
-                        raise
+                    return result
+                    
+                except Exception as e:
+                    # Send error event
+                    error_event = wrapper.event_builder.create_error(
+                        error_message=str(e),
+                        error_code=type(e).__name__,
+                        recoverable=True,
+                    )
+                    wrapper._send_event_sync(error_event)
+                    raise
+                finally:
+                    # Reset contexts
+                    wrapper.tracer.reset_parent_span_context(parent_token)
+                    wrapper.tracer.reset_session_context(session_tokens)
             
             # Create async kickoff wrapper  
             @functools.wraps(wrapper._original_kickoff_async or wrapper._original_kickoff)
@@ -165,67 +172,74 @@ class CrewAIWrapper:
                 """Instrumented async version of Crew.kickoff_async()."""
                 crew_data = _extract_crew_data(crew_instance, args, kwargs)
                 
-                with wrapper.tracer.start_span("crewai.crew.kickoff_async") as span:
-                    span.set_attribute("method", "kickoff_async")
-                    span.set_attribute("crew_name", crew_data['crew_name'])
-                    span.set_attribute("agents_count", len(crew_data['agents']))
+                # Send session start event
+                session_start = wrapper.event_builder.create_session_start(
+                    metadata={
+                        "crew_name": crew_data['crew_name'],
+                        "method": "kickoff_async",
+                        "framework": "crewai",
+                        "agents_count": len(crew_data['agents']),
+                        "tasks_count": len(crew_data['tasks']),
+                    }
+                )
+                await wrapper.tracer.client.send_event(session_start)
+                # Store session span_id for END event and as parent for execution events
+                wrapper._session_span_id = session_start.span_id
+                
+                # Set complete context for all subsequent events
+                # This ensures all events share the same session_id and trace_id
+                session_tokens = wrapper.tracer.set_session_context(session_start.session_id, session_start.trace_id)
+                parent_token = wrapper.tracer.set_parent_span_context(wrapper._session_span_id)
+                
+                try:
+                    # Send input received event if inputs provided (will use session as parent)
+                    if crew_data['inputs']:
+                        input_event = wrapper.event_builder.create_input_received(
+                            content=str(crew_data['inputs'])[:1000],
+                            metadata={"input_type": "crew_inputs", "method": "kickoff_async"}
+                        )
+                        await wrapper.tracer.client.send_event(input_event)
                     
-                    try:
-                        # Send session start event
-                        session_start = wrapper.event_builder.create_session_start(
-                            metadata={
-                                "crew_name": crew_data['crew_name'],
-                                "method": "kickoff_async",
-                                "framework": "crewai",
-                                "agents_count": len(crew_data['agents']),
-                                "tasks_count": len(crew_data['tasks']),
-                            }
-                        )
-                        await wrapper.tracer.client.send_event(session_start)
+                    # Execute original method
+                    if wrapper._original_kickoff_async:
+                        result = await wrapper._original_kickoff_async(crew_instance, *args, **kwargs)
+                    else:
+                        result = wrapper._original_kickoff(crew_instance, *args, **kwargs)
                         
-                        # Send input received event if inputs provided
-                        if crew_data['inputs']:
-                            input_event = wrapper.event_builder.create_input_received(
-                                content=str(crew_data['inputs'])[:1000],
-                                metadata={"input_type": "crew_inputs", "method": "kickoff_async"}
-                            )
-                            await wrapper.tracer.client.send_event(input_event)
-                        
-                        # Execute original method
-                        if wrapper._original_kickoff_async:
-                            result = await wrapper._original_kickoff_async(crew_instance, *args, **kwargs)
-                        else:
-                            result = wrapper._original_kickoff(crew_instance, *args, **kwargs)
-                        
-                        # Send output event
-                        output_event = wrapper.event_builder.create_output_emitted(
-                            content=str(result)[:1000] if result else "No result",
-                            metadata={"output_type": "crew_result", "method": "kickoff_async"}
-                        )
-                        await wrapper.tracer.client.send_event(output_event)
-                        
-                        # Send session end event
-                        session_end = wrapper.event_builder.create_session_end(
-                            metadata={
-                                "crew_name": crew_data['crew_name'],
-                                "method": "kickoff_async",
-                                "success": True,
-                                "result_type": type(result).__name__
-                            }
-                        )
-                        await wrapper.tracer.client.send_event(session_end)
-                        
-                        return result
-                        
-                    except Exception as e:
-                        # Send error event
-                        error_event = wrapper.event_builder.create_error(
-                            error_message=str(e),
-                            error_code=type(e).__name__,
-                            recoverable=True,
-                        )
-                        await wrapper.tracer.client.send_event(error_event)
-                        raise
+                    # Send output event
+                    output_event = wrapper.event_builder.create_output_emitted(
+                        content=str(result)[:1000] if result else "No result",
+                        metadata={"output_type": "crew_result", "method": "kickoff_async"}
+                    )
+                    await wrapper.tracer.client.send_event(output_event)
+                    
+                    # Send session end event
+                    session_end = wrapper.event_builder.create_session_end(
+                        span_id=wrapper._session_span_id,  # Use same span_id as SESSION_START
+                        metadata={
+                            "crew_name": crew_data['crew_name'],
+                            "method": "kickoff_async",
+                            "success": True,
+                            "result_type": type(result).__name__
+                        }
+                    )
+                    await wrapper.tracer.client.send_event(session_end)
+                    
+                    return result
+                    
+                except Exception as e:
+                    # Send error event
+                    error_event = wrapper.event_builder.create_error(
+                        error_message=str(e),
+                        error_code=type(e).__name__,
+                        recoverable=True,
+                    )
+                    await wrapper.tracer.client.send_event(error_event)
+                    raise
+                finally:
+                    # Reset contexts
+                    wrapper.tracer.reset_parent_span_context(parent_token)
+                    wrapper.tracer.reset_session_context(session_tokens)
             
             # Patch all methods
             Crew.kickoff = instrumented_kickoff
@@ -324,10 +338,13 @@ class CrewAIWrapper:
                     )
                     self._send_event_sync(start_event)
                     
+                    # Store agent span_id for END event
+                    agent_span_id = start_event.span_id
+                    
                     # Set the agent's span_id as the parent context for child events
                     # This ensures MODEL/TOOL events are children of AGENT_START
                     from chaukas.sdk.core.tracer import _parent_span_id
-                    token = _parent_span_id.set(start_event.span_id)
+                    token = _parent_span_id.set(agent_span_id)
                     
                     try:
                         # Execute original method  
@@ -336,11 +353,12 @@ class CrewAIWrapper:
                         # Reset parent context
                         _parent_span_id.reset(token)
                     
-                    # Send agent end event
+                    # Send agent end event with same span_id as START
                     end_event = self.event_builder.create_agent_end(
                         agent_id=agent_id,
                         agent_name=agent_name,
                         status=EventStatus.EVENT_STATUS_COMPLETED,
+                        span_id=agent_span_id,  # Use same span_id as AGENT_START
                         metadata={
                             "framework": "crewai",
                             "result": str(result)[:500] if result else None,
@@ -450,6 +468,11 @@ class CrewAIEventBusListener:
         self.event_builder = wrapper.event_builder
         self.tracer = wrapper.tracer
         self.registered_handlers = []
+        # Track span_ids for START/END event pairs
+        self._model_invocation_spans = {}  # Track active model invocations by unique ID
+        self._tool_call_spans = {}  # Map tool call_id to span_id
+        self._mcp_call_spans = {}  # Track active MCP calls
+        self._llm_call_counter = 0  # Counter for unique LLM call IDs
         
     def register_handlers(self):
         """Register event handlers with CrewAI's event bus."""
@@ -705,10 +728,14 @@ class CrewAIEventBusListener:
                 self.registered_handlers.extend([
                     handle_llm_started,
                     handle_llm_completed,
-                    handle_llm_failed,
-                    handle_guardrail_started,
-                    handle_guardrail_completed
+                    handle_llm_failed
                 ])
+                # Add guardrail handlers only if available
+                if guardrail_events_available:
+                    self.registered_handlers.extend([
+                        handle_guardrail_started,
+                        handle_guardrail_completed
+                    ])
             
             # Add reasoning handlers if available
             if reasoning_events_available:
@@ -833,6 +860,8 @@ class CrewAIEventBusListener:
                     agent_id=agent_id,
                     agent_name=agent_name
                 )
+                # Store span_id for END event
+                self._mcp_call_spans[event.tool_name] = mcp_event.span_id
                 self.wrapper._send_event_sync(mcp_event)
             else:
                 # Emit TOOL_CALL_START
@@ -852,6 +881,9 @@ class CrewAIEventBusListener:
                     agent_id=agent_id,
                     agent_name=agent_name
                 )
+                # Store span_id for END event
+                call_id = str(getattr(event, 'id', None)) if hasattr(event, 'id') else event.tool_name
+                self._tool_call_spans[call_id] = tool_event.span_id
                 self.wrapper._send_event_sync(tool_event)
         except Exception as e:
             logger.error(f"Error handling tool started event: {e}")
@@ -876,6 +908,9 @@ class CrewAIEventBusListener:
                 else:
                     response_data = {}
                 
+                # Retrieve span_id from START event
+                span_id = self._mcp_call_spans.pop(event.tool_name, None)
+                
                 mcp_event = self.event_builder.create_mcp_call_end(
                     server_name=event.tool_name,
                     server_url="mcp://local",
@@ -884,18 +919,24 @@ class CrewAIEventBusListener:
                     response=response_data,
                     execution_time_ms=duration_ms,
                     error=None,
+                    span_id=span_id,  # Use same span_id as START
                     agent_id=agent_id,
                     agent_name=agent_name
                 )
                 self.wrapper._send_event_sync(mcp_event)
             else:
                 # Emit TOOL_CALL_END
+                # Retrieve span_id from START event
+                call_id = str(getattr(event, 'id', None)) if hasattr(event, 'id') else event.tool_name
+                span_id = self._tool_call_spans.pop(call_id, None)
+                
                 tool_event = self.event_builder.create_tool_call_end(
                     tool_name=event.tool_name,
                     call_id=str(getattr(event, 'id', None)) if hasattr(event, 'id') else None,
                     output=str(event.output) if hasattr(event, 'output') else None,
                     error=None,
                     execution_time_ms=duration_ms,
+                    span_id=span_id,  # Use same span_id as START
                     agent_id=agent_id,
                     agent_name=agent_name
                 )
@@ -1108,6 +1149,20 @@ class CrewAIEventBusListener:
                 max_tokens=max_tokens,
                 tools=tools
             )
+            
+            # Generate unique key for this LLM call to handle concurrent calls
+            self._llm_call_counter += 1
+            llm_call_id = f"{agent_id}_{model}_{self._llm_call_counter}"
+            
+            # Store span_id for END event with unique key
+            self._model_invocation_spans[llm_call_id] = llm_event.span_id
+            
+            # Also store the event details to match with END event
+            if not hasattr(event, '_chaukas_llm_call_id'):
+                event._chaukas_llm_call_id = llm_call_id
+            
+            logger.debug(f"Stored MODEL span {llm_event.span_id[-8:]} for call_id {llm_call_id}")
+            
             self.wrapper._send_event_sync(llm_event)
             logger.info("✓ MODEL_INVOCATION_START event sent successfully")
         except Exception as e:
@@ -1134,7 +1189,27 @@ class CrewAIEventBusListener:
                 duration = event.completed_at - event.started_at
                 duration_ms = duration.total_seconds() * 1000
             
-            # Emit MODEL_INVOCATION_END
+            # Try to retrieve span_id using the stored call_id
+            span_id = None
+            llm_call_id = getattr(event, '_chaukas_llm_call_id', None)
+            
+            if llm_call_id and llm_call_id in self._model_invocation_spans:
+                # Found by exact call_id match
+                span_id = self._model_invocation_spans.pop(llm_call_id)
+                logger.debug(f"Retrieved MODEL span {span_id[-8:]} for call_id {llm_call_id}")
+            else:
+                # Fallback: try to find the most recent matching span
+                # This handles cases where the event object doesn't preserve our custom attribute
+                for key in list(self._model_invocation_spans.keys()):
+                    if key.startswith(f"{agent_id}_{model}_"):
+                        span_id = self._model_invocation_spans.pop(key)
+                        logger.debug(f"Retrieved MODEL span {span_id[-8:]} using fallback for {agent_id}/{model}")
+                        break
+                
+                if not span_id:
+                    logger.warning(f"Could not find matching MODEL span for {agent_id}/{model}")
+            
+            # Emit MODEL_INVOCATION_END with same span_id as START
             llm_event = self.event_builder.create_model_invocation_end(
                 provider=provider,
                 model=model,
@@ -1145,6 +1220,7 @@ class CrewAIEventBusListener:
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
                 duration_ms=duration_ms,
+                span_id=span_id,  # Use same span_id as START
                 agent_id=agent_id,
                 agent_name=agent_name,
                 error=None

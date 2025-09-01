@@ -32,6 +32,8 @@ class EventBuilder:
     def __init__(self):
         """Initialize event builder with configuration."""
         self.config = get_config()
+        # Span registry to track START event span_ids for reuse in END events
+        self._span_registry: Dict[tuple, str] = {}  # Maps (event_type, identifier) -> span_id
     
     def _create_base_event(
         self,
@@ -125,6 +127,9 @@ class EventBuilder:
         if session_id:
             event.session_id = session_id
         
+        # Store span_id for reuse in SESSION_END
+        self._span_registry[('session', session_id or 'default')] = event.span_id
+        
         if metadata:
             self._set_metadata(event, metadata)
         
@@ -133,6 +138,7 @@ class EventBuilder:
     def create_session_end(
         self,
         session_id: Optional[str] = None,
+        span_id: Optional[str] = None,  # Reuse START event's span_id
         metadata: Optional[Dict[str, Any]] = None
     ) -> Event:
         """Create SESSION_END event."""
@@ -144,6 +150,17 @@ class EventBuilder:
         
         # SESSION_END is always a root event - clear any parent_span_id
         event.ClearField('parent_span_id')
+        
+        # Use provided span_id or fallback to registry
+        if span_id:
+            event.span_id = span_id
+        else:
+            # Try to get from registry
+            registry_key = ('session', session_id or 'default')
+            if registry_key in self._span_registry:
+                event.span_id = self._span_registry[registry_key]
+                # Clean up registry
+                del self._span_registry[registry_key]
         
         if session_id:
             event.session_id = session_id
@@ -187,6 +204,9 @@ class EventBuilder:
                 metadata = {}
             metadata.update(agent_data)
         
+        # Store span_id for reuse in AGENT_END
+        self._span_registry[('agent', agent_id)] = event.span_id
+        
         if metadata:
             self._set_metadata(event, metadata)
         
@@ -197,6 +217,7 @@ class EventBuilder:
         agent_id: str,
         agent_name: str,
         status: EventStatus = EventStatus.EVENT_STATUS_COMPLETED,
+        span_id: Optional[str] = None,  # Reuse START event's span_id
         metadata: Optional[Dict[str, Any]] = None
     ) -> Event:
         """Create AGENT_END event."""
@@ -207,6 +228,17 @@ class EventBuilder:
             agent_id=agent_id,
             agent_name=agent_name,
         )
+        
+        # Use provided span_id or fallback to registry
+        if span_id:
+            event.span_id = span_id
+        else:
+            # Try to get from registry
+            registry_key = ('agent', agent_id)
+            if registry_key in self._span_registry:
+                event.span_id = self._span_registry[registry_key]
+                # Clean up registry
+                del self._span_registry[registry_key]
         
         if metadata:
             self._set_metadata(event, metadata)
@@ -310,6 +342,7 @@ class EventBuilder:
         completion_tokens: Optional[int] = None,
         total_tokens: Optional[int] = None,
         duration_ms: Optional[float] = None,
+        span_id: Optional[str] = None,  # Reuse START event's span_id
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None,
         error: Optional[str] = None
@@ -324,6 +357,10 @@ class EventBuilder:
             agent_id=agent_id,
             agent_name=agent_name,
         )
+        
+        # Use provided span_id to match MODEL_INVOCATION_START
+        if span_id:
+            event.span_id = span_id
         
         # Create LLMInvocation message
         llm = LLMInvocation()
@@ -408,6 +445,7 @@ class EventBuilder:
         output: Optional[Any] = None,
         error: Optional[str] = None,
         execution_time_ms: Optional[float] = None,
+        span_id: Optional[str] = None,  # Reuse START event's span_id
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
     ) -> Event:
@@ -421,6 +459,10 @@ class EventBuilder:
             agent_id=agent_id,
             agent_name=agent_name,
         )
+        
+        # Use provided span_id to match TOOL_CALL_START
+        if span_id:
+            event.span_id = span_id
         
         # Create ToolResponse message
         tool_response = ToolResponse()
@@ -494,6 +536,7 @@ class EventBuilder:
         response: Dict[str, Any],
         execution_time_ms: Optional[float] = None,
         error: Optional[str] = None,
+        span_id: Optional[str] = None,  # Reuse START event's span_id
         agent_id: Optional[str] = None,
         agent_name: Optional[str] = None
     ) -> Event:
@@ -507,6 +550,10 @@ class EventBuilder:
             agent_id=agent_id,
             agent_name=agent_name,
         )
+        
+        # Use provided span_id to match MCP_CALL_START
+        if span_id:
+            event.span_id = span_id
         
         # Create MCPCall message
         mcp_call = MCPCall()

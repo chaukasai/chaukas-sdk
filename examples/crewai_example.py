@@ -3,6 +3,10 @@ Example usage with CrewAI.
 """
 
 import os
+
+# Disable CrewAI telemetry to prevent "Service Unavailable" errors
+os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
+
 import asyncio
 from crewai import Agent, Task, Crew, Process
 

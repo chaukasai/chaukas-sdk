@@ -187,6 +187,56 @@ class ChaukasTracer:
             "parent_span_id": _parent_span_id.get(),
         }
     
+    def set_parent_span_context(self, parent_span_id: str) -> Any:
+        """
+        Set the parent span context for subsequent events.
+        
+        This allows setting a specific span as the parent without creating
+        a new span. Useful for setting SESSION span as parent for execution events.
+        
+        Args:
+            parent_span_id: The span ID to use as parent for subsequent events
+            
+        Returns:
+            A token that can be used to reset the context
+        """
+        return _parent_span_id.set(parent_span_id)
+    
+    def reset_parent_span_context(self, token: Any) -> None:
+        """
+        Reset the parent span context using a token.
+        
+        Args:
+            token: The token returned by set_parent_span_context
+        """
+        _parent_span_id.reset(token)
+    
+    def set_session_context(self, session_id: str, trace_id: str) -> tuple:
+        """
+        Set the session and trace context for subsequent events.
+        
+        Args:
+            session_id: The session ID to use
+            trace_id: The trace ID to use
+            
+        Returns:
+            A tuple of tokens (session_token, trace_token) for resetting
+        """
+        session_token = _session_id.set(session_id)
+        trace_token = _trace_id.set(trace_id)
+        return (session_token, trace_token)
+    
+    def reset_session_context(self, tokens: tuple) -> None:
+        """
+        Reset the session and trace context.
+        
+        Args:
+            tokens: Tuple of (session_token, trace_token) from set_session_context
+        """
+        session_token, trace_token = tokens
+        _session_id.reset(session_token)
+        _trace_id.reset(trace_token)
+    
     async def send_event(
         self,
         event_type: str,

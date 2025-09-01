@@ -193,5 +193,6 @@ temp/
 # Coding assistants
 CLAUDE.md
 
-# Example output files
+# Output and debug files
 *.jsonl
+*.dbg
