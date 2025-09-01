@@ -8,7 +8,8 @@ One-line instrumentation for agent building SDKs. Provides comprehensive observa
 - **Automatic SDK detection**: Supports OpenAI Agents, Google ADK, and CrewAI out of the box
 - **Distributed tracing**: Full session, trace, and span tracking with parent-child relationships
 - **Unified schema**: Normalizes events from different SDKs into consistent format
-- **Comprehensive coverage**: Captures LLM calls, tool usage, agent handoffs, user interactions, and lifecycle events
+- **100% Event Coverage**: Captures all 20 chaukas-spec event types including retry attempts
+- **Comprehensive observability**: Tracks LLM calls, tool usage, agent handoffs, retries, errors, and lifecycle events
 - **Immutable audit trail**: All events are preserved for deep analysis and compliance
 
 ## Supported SDKs
@@ -182,18 +183,44 @@ isort chaukas/ tests/ examples/
 mypy chaukas/
 ```
 
-## Event Types
+## Event Coverage
 
-The SDK captures these event types:
+The SDK achieves **100% coverage** of all 20 chaukas-spec event types:
 
-- **LLM Events**: `llm.request`, `llm.response`, `llm.stream.*`
-- **Tool Events**: `tool.call`, `tool.response`, `tool.error`
-- **Agent Events**: `agent.start`, `agent.end`, `agent.error`, `agent.handoff`
-- **Session Events**: `session.start`, `session.end`
-- **User Events**: `user.input`, `user.output`
-- **MCP Events**: `mcp.call`, `mcp.response`
-- **Guardrail Events**: `guardrail.check`, `guardrail.violation`
-- **Artifact Events**: `artifact.create`, `artifact.update`
+### Session & Agent Events
+- `SESSION_START` / `SESSION_END` - Track entire user sessions
+- `AGENT_START` / `AGENT_END` - Agent execution lifecycle
+- `AGENT_HANDOFF` - Task delegation between agents
+
+### Model & Tool Events  
+- `MODEL_INVOCATION_START` / `MODEL_INVOCATION_END` - LLM API calls
+- `TOOL_CALL_START` / `TOOL_CALL_END` - Tool executions
+- `MCP_CALL_START` / `MCP_CALL_END` - Model Context Protocol calls
+
+### I/O Events
+- `INPUT_RECEIVED` - User inputs and prompts
+- `OUTPUT_EMITTED` - Agent responses and outputs
+
+### Operational Events
+- `ERROR` - Error tracking with recovery information
+- `RETRY` - Automatic retry detection with backoff strategies *(NEW)*
+- `POLICY_DECISION` - Policy enforcement and guardrails
+- `DATA_ACCESS` - Data source access tracking
+- `STATE_UPDATE` - Agent state changes
+- `SYSTEM` - General system events
+
+### RETRY Event Details (NEW)
+The SDK now automatically captures retry attempts when:
+- LLM calls fail due to rate limits (429) or service errors (503)
+- Tool executions timeout or experience network failures
+- Tasks fail with retryable errors
+
+Each RETRY event includes:
+- Attempt number and maximum attempts
+- Backoff strategy (exponential, linear, immediate)
+- Delay in milliseconds before next attempt
+- Detailed reason for the retry
+- Agent context for traceability
 
 ## License
 
