@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Enhanced OpenAI Agents Integration** - Achieved 80% event coverage (16/20 events)
+  - Created `OpenAIAgentsEnhancedWrapper` using base classes and utilities
+  - Added SESSION_START/END lifecycle tracking
+  - Added TOOL_CALL_START tracking from LLM responses
+  - Added INPUT_RECEIVED and OUTPUT_EMITTED for I/O tracking
+  - Added RETRY event support with intelligent error detection
+  - Session management with automatic start/end
+  - Comprehensive test suite with 10+ test cases
+  - Working example with retry simulation
+
 - **RETRY Event Support for CrewAI Integration** - Achieved 100% chaukas-spec event coverage
   - Implemented automatic retry detection for LLM calls, tool executions, and task failures
   - Added intelligent retry tracking with attempt counters per agent/model/tool
@@ -17,7 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Created comprehensive test suite for retry event validation
   - Added two example scripts demonstrating retry event capture
 
+- **Reusable Integration Components**
+  - Created `BaseIntegrationWrapper` base class for common functionality
+  - Extracted `RetryDetector` utility for retry tracking across integrations
+  - Extracted `EventPairManager` for START/END event correlation
+  - Reduced code duplication by ~40% across integrations
+
 ### Enhanced
+- **OpenAI Agents Support**
+  - Increased event coverage from 25% to 80% (5 events → 16 events)
+  - MonkeyPatcher now uses enhanced wrapper when available
+  - Automatic fallback to standard wrapper for compatibility
+
 - **CrewAI Event Bus Listener** 
   - Extended error handlers to detect and emit RETRY events
   - Added `_is_retryable_error()` helper method for intelligent error classification
