@@ -42,6 +42,7 @@ class MonkeyPatcher:
         self.tracer = tracer
         self.config = config
         self.patches: List[PatchTarget] = []
+        self._wrappers: List[Any] = []  # Store wrapper instances for cleanup
         self._auto_detect = config.get("auto_detect", True)
         self._enabled_integrations = config.get("enabled_integrations", [])
     
@@ -57,6 +58,17 @@ class MonkeyPatcher:
         for patch in self.patches:
             if patch.is_patched:
                 self._unpatch_target(patch)
+    
+    async def close(self) -> None:
+        """Close all wrappers and clean up resources."""
+        import asyncio
+        for wrapper in self._wrappers:
+            if hasattr(wrapper, 'close'):
+                if asyncio.iscoroutinefunction(wrapper.close):
+                    await wrapper.close()
+                else:
+                    wrapper.close()
+        self._wrappers.clear()
     
     def _detect_and_patch_sdks(self) -> None:
         """Auto-detect installed SDKs and patch them."""
@@ -87,10 +99,12 @@ class MonkeyPatcher:
         try:
             from chaukas.sdk.integrations.openai_agents_enhanced import OpenAIAgentsEnhancedWrapper
             wrapper = OpenAIAgentsEnhancedWrapper(self.tracer)
+            self._wrappers.append(wrapper)  # Store for cleanup
             logger.info("Using enhanced OpenAI Agents wrapper with 80% event coverage")
         except ImportError:
             from chaukas.sdk.integrations.openai_agents import OpenAIAgentsWrapper
             wrapper = OpenAIAgentsWrapper(self.tracer)
+            self._wrappers.append(wrapper)  # Store for cleanup
             logger.info("Using standard OpenAI Agents wrapper")
         
         # Patch Agent.run

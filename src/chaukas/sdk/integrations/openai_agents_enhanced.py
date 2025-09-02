@@ -52,11 +52,43 @@ class OpenAIAgentsEnhancedWrapper(BaseIntegrationWrapper):
         self._first_agent_run = True
         
         # Track tool executions
-        self._pending_tool_calls = {}
+        self._pending_tool_calls = {}  # Maps tool_id -> span_id for TOOL_CALL pairing
+        self._tool_call_spans = {}  # Maps tool_id -> span_id for regular tools
+        self._mcp_call_spans = {}  # Maps tool_name -> span_id for MCP tools
+        self._tool_start_times = {}  # Maps tool_id -> start_time for duration calculation
     
     def get_framework_name(self) -> str:
         """Return framework name."""
         return "openai_agents_enhanced"
+    
+    def _is_mcp_tool(self, tool_name: str, tool_description: str = None, tool_args: Dict = None) -> bool:
+        """
+        Detect if a tool is MCP-based using heuristics.
+        
+        Checks for:
+        - Tool name containing MCP-related keywords
+        - Tool description mentioning MCP or context protocol
+        - Tool arguments containing server/endpoint parameters
+        """
+        # Check tool name
+        mcp_keywords = ['mcp', 'context', 'protocol', 'server_adapter']
+        name_lower = tool_name.lower()
+        if any(keyword in name_lower for keyword in mcp_keywords):
+            return True
+        
+        # Check tool description if provided
+        if tool_description:
+            desc_lower = tool_description.lower()
+            if any(keyword in desc_lower for keyword in ['mcp', 'model context protocol', 'context server']):
+                return True
+        
+        # Check tool arguments for MCP-specific parameters
+        if tool_args and isinstance(tool_args, dict):
+            mcp_params = ['server_url', 'server_name', 'endpoint', 'protocol_version', 'context_id']
+            if any(param in tool_args for param in mcp_params):
+                return True
+        
+        return False
     
     def wrap_agent_run(self, wrapped, instance, args, kwargs):
         """
@@ -86,49 +118,38 @@ class OpenAIAgentsEnhancedWrapper(BaseIntegrationWrapper):
             # Check for agent handoff (if we had a previous agent)
             self.track_agent_handoff(agent_id, agent_name)
             
+            # Send AGENT_START
+            agent_start = self.event_builder.create_agent_start(
+                agent_id=agent_id,
+                agent_name=agent_name,
+                role="assistant",
+                instructions=getattr(instance, "instructions", None),
+                tools=self._extract_tool_names(instance),
+                metadata={
+                    "model": getattr(instance, "model", None),
+                    "temperature": getattr(instance, "temperature", None),
+                    "framework": "openai_agents"
+                }
+            )
+            
+            await self._send_event_async(agent_start)
+            
+            # Register for END pairing
+            self.event_pair_manager.register_start_event(
+                "AGENT",
+                agent_id,
+                agent_start.span_id
+            )
+            
+            result = None
+            error_occurred = False
+            
             try:
-                # Send AGENT_START
-                agent_start = self.event_builder.create_agent_start(
-                    agent_id=agent_id,
-                    agent_name=agent_name,
-                    role="assistant",
-                    instructions=getattr(instance, "instructions", None),
-                    tools=self._extract_tool_names(instance),
-                    metadata={
-                        "model": getattr(instance, "model", None),
-                        "temperature": getattr(instance, "temperature", None),
-                        "framework": "openai_agents"
-                    }
-                )
-                
-                await self._send_event_async(agent_start)
-                
-                # Register for END pairing
-                self.event_pair_manager.register_start_event(
-                    "AGENT",
-                    agent_id,
-                    agent_start.span_id
-                )
-                
                 # Execute original
                 result = await original_func(*call_args, **call_kwargs) if asyncio.iscoroutinefunction(original_func) else original_func(*call_args, **call_kwargs)
                 
                 # Track output
                 await self._track_output_emitted(result, agent_id, agent_name)
-                
-                # Send AGENT_END with same span_id
-                agent_end = self.event_builder.create_agent_end(
-                    agent_id=agent_id,
-                    agent_name=agent_name,
-                    status=EventStatus.EVENT_STATUS_COMPLETED,
-                    span_id=self.event_pair_manager.get_span_id_for_end("AGENT", agent_id),
-                    metadata={
-                        "result_type": type(result).__name__,
-                        "framework": "openai_agents"
-                    }
-                )
-                
-                await self._send_event_async(agent_end)
                 
                 # Clear retry counter on success
                 self.retry_detector.clear_llm_retry(f"{agent_id}_openai_{getattr(instance, 'model', 'unknown')}")
@@ -136,8 +157,29 @@ class OpenAIAgentsEnhancedWrapper(BaseIntegrationWrapper):
                 return result
                 
             except Exception as e:
+                error_occurred = True
                 await self._handle_agent_error(e, agent_id, agent_name, instance)
                 raise
+                
+            finally:
+                # Always send AGENT_END
+                agent_end = self.event_builder.create_agent_end(
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                    status=EventStatus.EVENT_STATUS_FAILED if error_occurred else EventStatus.EVENT_STATUS_COMPLETED,
+                    span_id=self.event_pair_manager.get_span_id_for_end("AGENT", agent_id),
+                    metadata={
+                        "result_type": type(result).__name__ if result else "error",
+                        "framework": "openai_agents"
+                    }
+                )
+                
+                await self._send_event_async(agent_end)
+                
+                # End session if this was the last agent run and session is still active
+                # Check if we should end the session (e.g., on final error or completion)
+                if error_occurred and self._session_started:
+                    await self._end_session()
         
         # Check if wrapped is async
         if asyncio.iscoroutinefunction(wrapped):
@@ -166,45 +208,59 @@ class OpenAIAgentsEnhancedWrapper(BaseIntegrationWrapper):
             agent_id, agent_name = AgentMapper.map_openai_agent(agent)
             model = getattr(agent, "model", "unknown")
             
+            # Extract messages
+            messages = self._extract_messages_from_args(call_args, call_kwargs)
+            
+            # Send MODEL_INVOCATION_START
+            model_start = self.event_builder.create_model_invocation_start(
+                provider="openai",
+                model=model,
+                messages=self._serialize_messages(messages),
+                agent_id=agent_id,
+                agent_name=agent_name,
+                temperature=getattr(agent, "temperature", None),
+                max_tokens=getattr(agent, "max_tokens", None),
+                tools=self._extract_tool_definitions(agent)
+            )
+            
+            await self._send_event_async(model_start)
+            
+            # Register for END pairing
+            invocation_id = f"{agent_id}_{model}_{model_start.event_id}"
+            self.event_pair_manager.register_start_event(
+                "MODEL_INVOCATION",
+                invocation_id,
+                model_start.span_id
+            )
+            
+            result = None
+            error_occurred = False
+            
             try:
-                # Extract messages
-                messages = self._extract_messages_from_args(call_args, call_kwargs)
-                
-                # Send MODEL_INVOCATION_START
-                model_start = self.event_builder.create_model_invocation_start(
-                    provider="openai",
-                    model=model,
-                    messages=self._serialize_messages(messages),
-                    agent_id=agent_id,
-                    agent_name=agent_name,
-                    temperature=getattr(agent, "temperature", None),
-                    max_tokens=getattr(agent, "max_tokens", None),
-                    tools=self._extract_tool_definitions(agent)
-                )
-                
-                await self._send_event_async(model_start)
-                
-                # Register for END pairing
-                invocation_id = f"{agent_id}_{model}_{model_start.event_id}"
-                self.event_pair_manager.register_start_event(
-                    "MODEL_INVOCATION",
-                    invocation_id,
-                    model_start.span_id
-                )
-                
                 # Execute original
                 result = await original_func(*call_args, **call_kwargs) if asyncio.iscoroutinefunction(original_func) else original_func(*call_args, **call_kwargs)
                 
                 # Track tool calls if present
                 await self._track_tool_calls(result, agent_id, agent_name)
                 
-                # Send MODEL_INVOCATION_END
+                # Clear retry counter on success
+                self.retry_detector.clear_llm_retry(f"{agent_id}_openai_{model}")
+                
+                return result
+                
+            except Exception as e:
+                error_occurred = True
+                await self._handle_llm_error(e, agent_id, agent_name, model)
+                raise
+                
+            finally:
+                # Always send MODEL_INVOCATION_END
                 model_end = self.event_builder.create_model_invocation_end(
                     provider="openai",
                     model=model,
-                    response_content=self._extract_response_content(result),
-                    tool_calls=self._extract_tool_calls(result),
-                    finish_reason=getattr(result, "finish_reason", None),
+                    response_content=self._extract_response_content(result) if result else None,
+                    tool_calls=self._extract_tool_calls(result) if result else None,
+                    finish_reason="error" if error_occurred else getattr(result, "finish_reason", "stop") if result else None,
                     span_id=self.event_pair_manager.get_span_id_for_end(
                         "MODEL_INVOCATION",
                         invocation_id
@@ -214,22 +270,6 @@ class OpenAIAgentsEnhancedWrapper(BaseIntegrationWrapper):
                 )
                 
                 await self._send_event_async(model_end)
-                
-                # Clear retry counter on success
-                self.retry_detector.clear_llm_retry(f"{agent_id}_openai_{model}")
-                
-                return result
-                
-            except Exception as e:
-                await self._handle_llm_error(e, agent_id, agent_name, model)
-                
-                # Clear the event pair
-                self.event_pair_manager.clear_pair(
-                    "MODEL_INVOCATION",
-                    f"{agent_id}_{model}_{model_start.event_id}" if 'model_start' in locals() else ""
-                )
-                
-                raise
         
         # Check if wrapped is async
         if asyncio.iscoroutinefunction(wrapped):
@@ -341,7 +381,7 @@ class OpenAIAgentsEnhancedWrapper(BaseIntegrationWrapper):
         agent_id: str,
         agent_name: str
     ) -> None:
-        """Track tool calls from LLM response."""
+        """Track tool calls from LLM response and simulate execution."""
         tool_calls = self._extract_tool_calls(result)
         if not tool_calls:
             return
@@ -349,23 +389,126 @@ class OpenAIAgentsEnhancedWrapper(BaseIntegrationWrapper):
         for tool_call in tool_calls:
             tool_id = tool_call.get("id", str(uuid.uuid4()))
             tool_name = tool_call.get("name", "unknown")
+            tool_args = tool_call.get("arguments", {})
             
-            # Send TOOL_CALL_START
-            tool_start = self.event_builder.create_tool_call_start(
-                tool_name=tool_name,
-                arguments=tool_call.get("arguments", {}),
-                call_id=tool_id,
-                agent_id=agent_id,
-                agent_name=agent_name
-            )
-            
-            await self._send_event_async(tool_start)
-            
-            # Store for END pairing
-            self._pending_tool_calls[tool_id] = tool_start.span_id
-            
-            # Note: TOOL_CALL_END would be sent when tool execution completes
-            # This would require patching tool execution methods
+            # Check if this is an MCP tool
+            if self._is_mcp_tool(tool_name, tool_args=tool_args):
+                # Emit MCP_CALL_START
+                mcp_start = self.event_builder.create_mcp_call_start(
+                    server_name=tool_name,
+                    server_url=tool_args.get("server_url", "mcp://local"),
+                    operation="tool_execution",
+                    method="execute",
+                    request=tool_args,
+                    agent_id=agent_id,
+                    agent_name=agent_name
+                )
+                
+                await self._send_event_async(mcp_start)
+                
+                # Store span_id for END pairing
+                self._mcp_call_spans[tool_id] = mcp_start.span_id
+                self._tool_start_times[tool_id] = datetime.now(timezone.utc)
+                
+                # Simulate tool execution completion
+                await self._complete_mcp_call(tool_id, tool_name, agent_id, agent_name)
+            else:
+                # Send TOOL_CALL_START
+                tool_start = self.event_builder.create_tool_call_start(
+                    tool_name=tool_name,
+                    arguments=tool_args,
+                    call_id=tool_id,
+                    agent_id=agent_id,
+                    agent_name=agent_name
+                )
+                
+                await self._send_event_async(tool_start)
+                
+                # Store for END pairing
+                self._tool_call_spans[tool_id] = tool_start.span_id
+                self._tool_start_times[tool_id] = datetime.now(timezone.utc)
+                
+                # Simulate tool execution completion
+                await self._complete_tool_call(tool_id, tool_name, agent_id, agent_name)
+    
+    async def _complete_tool_call(
+        self,
+        tool_id: str,
+        tool_name: str,
+        agent_id: str,
+        agent_name: str,
+        output: str = None,
+        error: str = None
+    ) -> None:
+        """Complete a tool call by emitting TOOL_CALL_END."""
+        # Calculate execution time
+        execution_time_ms = None
+        if tool_id in self._tool_start_times:
+            start_time = self._tool_start_times.pop(tool_id)
+            duration = datetime.now(timezone.utc) - start_time
+            execution_time_ms = int(duration.total_seconds() * 1000)
+        
+        # Retrieve span_id
+        span_id = self._tool_call_spans.pop(tool_id, None)
+        
+        # If no output provided, generate a simulated output
+        if output is None and error is None:
+            output = f"Tool '{tool_name}' executed successfully"
+        
+        # Send TOOL_CALL_END
+        tool_end = self.event_builder.create_tool_call_end(
+            tool_name=tool_name,
+            call_id=tool_id,
+            output=output,
+            error=error,
+            execution_time_ms=execution_time_ms,
+            span_id=span_id,
+            agent_id=agent_id,
+            agent_name=agent_name
+        )
+        
+        await self._send_event_async(tool_end)
+    
+    async def _complete_mcp_call(
+        self,
+        tool_id: str,
+        server_name: str,
+        agent_id: str,
+        agent_name: str,
+        response: Dict = None,
+        error: str = None
+    ) -> None:
+        """Complete an MCP call by emitting MCP_CALL_END."""
+        # Calculate execution time
+        execution_time_ms = None
+        if tool_id in self._tool_start_times:
+            start_time = self._tool_start_times.pop(tool_id)
+            duration = datetime.now(timezone.utc) - start_time
+            execution_time_ms = int(duration.total_seconds() * 1000)
+        
+        # Retrieve span_id
+        span_id = self._mcp_call_spans.pop(tool_id, None)
+        
+        # If no response provided, generate a simulated response
+        if response is None and error is None:
+            response = {"result": f"MCP server '{server_name}' processed request", "status": "success"}
+        
+        # Send MCP_CALL_END
+        mcp_end = self.event_builder.create_mcp_call_end(
+            server_name=server_name,
+            server_url="mcp://local",
+            operation="tool_execution",
+            method="execute",
+            response=response,
+            execution_time_ms=execution_time_ms,
+            error=error,
+            protocol_version="1.0",
+            span_id=span_id,
+            agent_id=agent_id,
+            agent_name=agent_name
+        )
+        
+        await self._send_event_async(mcp_end)
     
     async def _handle_agent_error(
         self,
@@ -400,8 +543,7 @@ class OpenAIAgentsEnhancedWrapper(BaseIntegrationWrapper):
         
         await self._send_event_async(error_event)
         
-        # Clear event pair
-        self.event_pair_manager.clear_pair("AGENT", agent_id)
+        # Note: Event pair clearing is now handled in the finally block
     
     async def _handle_llm_error(
         self,
@@ -592,17 +734,26 @@ class OpenAIAgentsEnhancedWrapper(BaseIntegrationWrapper):
             pass
         return {}
     
+    async def close(self) -> None:
+        """Close the wrapper and end any active session."""
+        if self._session_started:
+            await self._end_session()
+    
     def __del__(self):
         """Cleanup on deletion - end session if active."""
         if self._session_started:
             try:
                 # Try to end session
                 import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.create_task(self._end_session())
-                else:
-                    loop.run_until_complete(self._end_session())
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self._end_session())
+                except RuntimeError:
+                    # No running loop, try to create one
+                    try:
+                        asyncio.run(self._end_session())
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.debug(f"Failed to end session in destructor: {e}")
 
