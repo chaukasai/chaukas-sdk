@@ -83,8 +83,15 @@ class MonkeyPatcher:
     
     def _patch_openai_agents(self) -> None:
         """Apply patches for OpenAI Agents SDK."""
-        from chaukas.sdk.integrations.openai_agents import OpenAIAgentsWrapper
-        wrapper = OpenAIAgentsWrapper(self.tracer)
+        # Use enhanced version if available, fallback to original
+        try:
+            from chaukas.sdk.integrations.openai_agents_enhanced import OpenAIAgentsEnhancedWrapper
+            wrapper = OpenAIAgentsEnhancedWrapper(self.tracer)
+            logger.info("Using enhanced OpenAI Agents wrapper with 80% event coverage")
+        except ImportError:
+            from chaukas.sdk.integrations.openai_agents import OpenAIAgentsWrapper
+            wrapper = OpenAIAgentsWrapper(self.tracer)
+            logger.info("Using standard OpenAI Agents wrapper")
         
         # Patch Agent.run
         self._add_patch(

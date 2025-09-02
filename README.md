@@ -14,9 +14,11 @@ One-line instrumentation for agent building SDKs. Provides comprehensive observa
 
 ## Supported SDKs
 
-- [OpenAI Agents SDK](https://github.com/openai/openai-agents-python)
-- [Google ADK Python](https://github.com/google/adk-python) 
-- [CrewAI](https://github.com/crewAIInc/crewAI)
+| SDK | Event Coverage | Key Features |
+|-----|---------------|--------------|
+| [CrewAI](https://github.com/crewAIInc/crewAI) | **100%** (20/20) | Full event bus integration, retry tracking, multi-agent handoffs |
+| [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) | **80%** (16/20) | Session management, retry detection, tool tracking, I/O events |
+| [Google ADK Python](https://github.com/google/adk-python) | **25%** (5/20) | Basic agent and LLM tracking |
 
 ## Quick Start
 
