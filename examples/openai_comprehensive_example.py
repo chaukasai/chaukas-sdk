@@ -72,9 +72,20 @@ class MockTool:
             return f"Weather in {location}: Sunny, 72°F (22°C), light breeze"
         
         elif self.name == "mcp_context_fetch":
-            # Simulate an MCP-like tool (though OpenAI doesn't support MCP)
+            # Simulate an MCP tool - will be detected by name
             context = kwargs.get("context", "")
-            return f"Context retrieved: {context} - Full document available"
+            server_url = kwargs.get("server_url", "mcp://context-server")
+            return f"MCP Context retrieved from {server_url}: {context} - Full document available"
+        
+        elif self.name == "mcp_protocol_adapter":
+            # Another MCP tool - detected by name pattern
+            operation = kwargs.get("operation", "fetch")
+            return f"MCP Protocol Adapter executed operation '{operation}' successfully"
+        
+        elif self.name == "context_server_query":
+            # MCP tool detected by 'context' keyword
+            query = kwargs.get("query", "")
+            return f"Context Server Query: Found relevant context for '{query}'"
         
         else:
             return f"{self.name} executed with args: {kwargs}"
