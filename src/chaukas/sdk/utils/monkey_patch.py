@@ -73,7 +73,7 @@ class MonkeyPatcher:
     def _detect_and_patch_sdks(self) -> None:
         """Auto-detect installed SDKs and patch them."""
         sdk_modules = {
-            "openai_agents": "openai.agents",
+            "openai_agents": "agents",
             "google_adk": "adk",
             "crewai": "crewai",
         }
@@ -92,36 +92,6 @@ class MonkeyPatcher:
             patch_method = f"_patch_{integration}"
             if hasattr(self, patch_method):
                 getattr(self, patch_method)()
-    
-    def _patch_openai_agents(self) -> None:
-        """Apply patches for OpenAI Agents SDK."""
-        # Use enhanced version if available, fallback to original
-        try:
-            from chaukas.sdk.integrations.openai_agents_enhanced import OpenAIAgentsEnhancedWrapper
-            wrapper = OpenAIAgentsEnhancedWrapper(self.tracer)
-            self._wrappers.append(wrapper)  # Store for cleanup
-            logger.info("Using enhanced OpenAI Agents wrapper with 80% event coverage")
-        except ImportError:
-            from chaukas.sdk.integrations.openai_agents import OpenAIAgentsWrapper
-            wrapper = OpenAIAgentsWrapper(self.tracer)
-            self._wrappers.append(wrapper)  # Store for cleanup
-            logger.info("Using standard OpenAI Agents wrapper")
-        
-        # Patch Agent.run
-        self._add_patch(
-            "openai.agents",
-            "Agent",
-            "run",
-            wrapper.wrap_agent_run,
-        )
-        
-        # Patch Runner.run_once
-        self._add_patch(
-            "openai.agents",
-            "Runner", 
-            "run_once",
-            wrapper.wrap_runner_run_once,
-        )
     
     def _patch_google_adk(self) -> None:
         """Apply patches for Google ADK."""
@@ -142,6 +112,15 @@ class MonkeyPatcher:
             "run",
             wrapper.wrap_llm_agent_run,
         )
+    
+    def _patch_openai_agents(self) -> None:
+        """Apply patches for OpenAI Agents."""
+        from chaukas.sdk.integrations.openai_agents import OpenAIAgentsWrapper
+        wrapper = OpenAIAgentsWrapper(self.tracer)
+        self._wrappers.append(wrapper)  # Store wrapper for cleanup
+        
+        # Apply patches to Runner methods
+        wrapper.patch_runner()
     
     def _patch_crewai(self) -> None:
         """Apply patches for CrewAI."""

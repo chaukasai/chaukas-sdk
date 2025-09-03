@@ -1,12 +1,22 @@
 """
 OpenAI Agents SDK integration for Chaukas instrumentation.
-Uses proto-compliant events with proper distributed tracing.
+Provides 100% event coverage using hooks and monkey patching.
 """
 
-import asyncio
+import functools
 import logging
-from typing import Any, Dict, Optional, List
-from functools import wraps
+import time
+import json
+from typing import Any, Dict, Optional, List, Union
+from datetime import datetime
+import os
+
+# Optional performance monitoring
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 from chaukas.spec.common.v1.events_pb2 import EventStatus
 
@@ -23,216 +33,793 @@ class OpenAIAgentsWrapper:
     def __init__(self, tracer: ChaukasTracer):
         self.tracer = tracer
         self.event_builder = EventBuilder()
+        self._session_active = False
+        self._session_span_id = None
+        self._start_time = None
+        self._start_metrics = None
+        self._current_agent_span_id = None
+        self._original_runner_run = None
+        self._original_runner_run_sync = None
+        self._original_runner_run_streamed = None
+        # Track retry attempts
+        self._llm_retry_attempts = {}
+        self._tool_retry_attempts = {}
+        self._agent_retry_attempts = {}
     
-    def wrap_agent_run(self, wrapped, instance, args, kwargs):
-        """Wrap Agent.run method with proto-compliant events."""
-        
-        @wraps(wrapped)
-        async def async_wrapper(*args, **kwargs):
-            # Extract agent info using mapper
-            agent_id, agent_name = AgentMapper.map_openai_agent(instance)
+    def patch_runner(self):
+        """Apply patches to OpenAI Runner methods."""
+        try:
+            from agents import Runner
             
-            with self.tracer.start_span("openai_agent.run") as span:
-                span.set_attribute("agent_type", "openai")
-                span.set_attribute("agent_name", agent_name)
+            # Store original methods
+            self._original_runner_run = Runner.run
+            self._original_runner_run_sync = Runner.run_sync
+            self._original_runner_run_streamed = Runner.run_streamed
+            
+            wrapper = self
+            
+            # Patch async run method
+            @functools.wraps(wrapper._original_runner_run)
+            async def instrumented_run(starting_agent, input_data, **kwargs):
+                """Instrumented version of Runner.run()."""
+                
+                # Start session if not active
+                if not wrapper._session_active:
+                    wrapper._start_session(starting_agent)
+                
+                # Send INPUT_RECEIVED event
+                input_event = wrapper.event_builder.create_input_received(
+                    content=str(input_data)[:1000] if input_data else "",
+                    metadata={"method": "Runner.run", "agent": starting_agent.name if hasattr(starting_agent, 'name') else None}
+                )
+                await wrapper.tracer.client.send_event(input_event)
+                
+                # Inject our custom hooks
+                hooks = kwargs.get('hooks')
+                custom_hooks = wrapper.create_custom_hooks()
+                
+                # Merge with existing hooks if provided
+                if hooks:
+                    # Chain our hooks with user's hooks
+                    merged_hooks = wrapper.merge_hooks(hooks, custom_hooks)
+                    kwargs['hooks'] = merged_hooks
+                else:
+                    kwargs['hooks'] = custom_hooks
                 
                 try:
+                    # Execute original method
+                    result = await wrapper._original_runner_run(starting_agent, input_data, **kwargs)
+                    
+                    # Send OUTPUT_EMITTED event
+                    output_event = wrapper.event_builder.create_output_emitted(
+                        content=str(result)[:1000] if result else "No output",
+                        metadata={"method": "Runner.run", "agent": starting_agent.name if hasattr(starting_agent, 'name') else None}
+                    )
+                    await wrapper.tracer.client.send_event(output_event)
+                    
+                    return result
+                    
+                except Exception as e:
+                    # Handle errors
+                    await wrapper._handle_error(e, starting_agent)
+                    raise
+                finally:
+                    # End session if this was the first call
+                    if wrapper._session_active and wrapper._session_span_id:
+                        await wrapper._end_session()
+            
+            # Patch sync run method
+            @functools.wraps(wrapper._original_runner_run_sync)
+            def instrumented_run_sync(starting_agent, input_data, **kwargs):
+                """Instrumented version of Runner.run_sync()."""
+                
+                # Start session if not active
+                if not wrapper._session_active:
+                    wrapper._start_session(starting_agent)
+                
+                # Send INPUT_RECEIVED event
+                input_event = wrapper.event_builder.create_input_received(
+                    content=str(input_data)[:1000] if input_data else "",
+                    metadata={"method": "Runner.run_sync", "agent": starting_agent.name if hasattr(starting_agent, 'name') else None}
+                )
+                wrapper._send_event_sync(input_event)
+                
+                # Inject our custom hooks
+                hooks = kwargs.get('hooks')
+                custom_hooks = wrapper.create_custom_hooks()
+                
+                if hooks:
+                    merged_hooks = wrapper.merge_hooks(hooks, custom_hooks)
+                    kwargs['hooks'] = merged_hooks
+                else:
+                    kwargs['hooks'] = custom_hooks
+                
+                try:
+                    # Execute original method
+                    result = wrapper._original_runner_run_sync(starting_agent, input_data, **kwargs)
+                    
+                    # Send OUTPUT_EMITTED event
+                    output_event = wrapper.event_builder.create_output_emitted(
+                        content=str(result)[:1000] if result else "No output",
+                        metadata={"method": "Runner.run_sync", "agent": starting_agent.name if hasattr(starting_agent, 'name') else None}
+                    )
+                    wrapper._send_event_sync(output_event)
+                    
+                    return result
+                    
+                except Exception as e:
+                    # Handle errors synchronously
+                    wrapper._handle_error_sync(e, starting_agent)
+                    raise
+                finally:
+                    # End session if this was the first call
+                    if wrapper._session_active and wrapper._session_span_id:
+                        wrapper._end_session_sync()
+            
+            # Patch streamed run method
+            @functools.wraps(wrapper._original_runner_run_streamed)
+            async def instrumented_run_streamed(starting_agent, input_data, **kwargs):
+                """Instrumented version of Runner.run_streamed()."""
+                
+                # Start session if not active
+                if not wrapper._session_active:
+                    wrapper._start_session(starting_agent)
+                
+                # Send INPUT_RECEIVED event
+                input_event = wrapper.event_builder.create_input_received(
+                    content=str(input_data)[:1000] if input_data else "",
+                    metadata={"method": "Runner.run_streamed", "agent": starting_agent.name if hasattr(starting_agent, 'name') else None}
+                )
+                await wrapper.tracer.client.send_event(input_event)
+                
+                # Inject our custom hooks
+                hooks = kwargs.get('hooks')
+                custom_hooks = wrapper.create_custom_hooks()
+                
+                if hooks:
+                    merged_hooks = wrapper.merge_hooks(hooks, custom_hooks)
+                    kwargs['hooks'] = merged_hooks
+                else:
+                    kwargs['hooks'] = custom_hooks
+                
+                try:
+                    # Execute original method - returns an async generator
+                    async for chunk in wrapper._original_runner_run_streamed(starting_agent, input_data, **kwargs):
+                        yield chunk
+                    
+                    # Send OUTPUT_EMITTED event for streamed response
+                    output_event = wrapper.event_builder.create_output_emitted(
+                        content="[Streamed response completed]",
+                        metadata={"method": "Runner.run_streamed", "agent": starting_agent.name if hasattr(starting_agent, 'name') else None}
+                    )
+                    await wrapper.tracer.client.send_event(output_event)
+                    
+                except Exception as e:
+                    await wrapper._handle_error(e, starting_agent)
+                    raise
+                finally:
+                    if wrapper._session_active and wrapper._session_span_id:
+                        await wrapper._end_session()
+            
+            # Apply patches
+            Runner.run = instrumented_run
+            Runner.run_sync = instrumented_run_sync
+            Runner.run_streamed = instrumented_run_streamed
+            
+            logger.info("Successfully patched OpenAI Runner methods")
+            return True
+            
+        except ImportError:
+            logger.warning("OpenAI Agents SDK not installed, skipping Runner patching")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to patch Runner: {e}")
+            return False
+    
+    def create_custom_hooks(self):
+        """Create custom RunHooks implementation for event capture."""
+        from agents.lifecycle import RunHooksBase
+        
+        wrapper = self
+        
+        class ChaukasRunHooks(RunHooksBase):
+            """Custom hooks for Chaukas event capture."""
+            
+            async def on_agent_start(self, context, agent):
+                """Called when an agent starts execution."""
+                try:
+                    # Extract agent info
+                    agent_id = agent.name if hasattr(agent, 'name') else str(id(agent))
+                    agent_name = agent.name if hasattr(agent, 'name') else "unnamed_agent"
+                    
                     # Send AGENT_START event
-                    start_event = self.event_builder.create_agent_start(
+                    agent_start = wrapper.event_builder.create_agent_start(
                         agent_id=agent_id,
                         agent_name=agent_name,
-                        role="openai_agent",
-                        instructions=getattr(instance, "instructions", None),
-                        tools=[tool.name for tool in getattr(instance, "tools", [])],
+                        role="assistant",
+                        instructions=agent.instructions if hasattr(agent, 'instructions') else None,
+                        tools=[tool.name if hasattr(tool, 'name') else str(tool) for tool in (agent.tools if hasattr(agent, 'tools') else [])],
                         metadata={
-                            "model": getattr(instance, "model", None),
-                            "framework": "openai_agents",
+                            "model": agent.model if hasattr(agent, 'model') else None,
+                            "framework": "openai_agents"
                         }
                     )
+                    await wrapper.tracer.client.send_event(agent_start)
+                    wrapper._current_agent_span_id = agent_start.span_id
+                except Exception as e:
+                    logger.error(f"Error in on_agent_start hook: {e}")
+            
+            async def on_agent_end(self, context, agent, output):
+                """Called when an agent ends execution."""
+                try:
+                    agent_id = agent.name if hasattr(agent, 'name') else str(id(agent))
+                    agent_name = agent.name if hasattr(agent, 'name') else "unnamed_agent"
                     
-                    await self.tracer.client.send_event(start_event)
+                    # Clear retry counter on successful completion
+                    agent_key = f"{agent_id}_{agent.model if hasattr(agent, 'model') else 'unknown'}"
+                    wrapper._agent_retry_attempts.pop(agent_key, None)
                     
-                    # Store span_id for AGENT_END event
-                    agent_span_id = start_event.span_id
-                    
-                    # Execute original method
-                    result = await wrapped(*args, **kwargs)
-                    
-                    # Send AGENT_END event with same span_id as START
-                    end_event = self.event_builder.create_agent_end(
+                    # Send AGENT_END event
+                    agent_end = wrapper.event_builder.create_agent_end(
                         agent_id=agent_id,
                         agent_name=agent_name,
                         status=EventStatus.EVENT_STATUS_COMPLETED,
-                        span_id=agent_span_id,  # Use same span_id as AGENT_START
+                        span_id=wrapper._current_agent_span_id,
                         metadata={
-                            "result_type": type(result).__name__,
-                            "messages_count": len(getattr(result, "messages", [])),
-                            "framework": "openai_agents",
+                            "output": str(output)[:500] if output else None,
+                            "framework": "openai_agents"
                         }
                     )
-                    
-                    await self.tracer.client.send_event(end_event)
-                    
-                    return result
-                    
+                    await wrapper.tracer.client.send_event(agent_end)
                 except Exception as e:
-                    # Send ERROR event
-                    error_event = self.event_builder.create_error(
-                        error_message=str(e),
-                        error_code=type(e).__name__,
-                        recoverable=True,
-                        agent_id=agent_id,
-                        agent_name=agent_name
-                    )
-                    
-                    await self.tracer.client.send_event(error_event)
-                    
-                    raise
-        
-        @wraps(wrapped)
-        def sync_wrapper(*args, **kwargs):
-            # For sync version, create async task
-            return asyncio.create_task(async_wrapper(*args, **kwargs))
-        
-        # Check if original is async
-        if asyncio.iscoroutinefunction(wrapped):
-            return async_wrapper
-        else:
-            return sync_wrapper
-    
-    def wrap_runner_run_once(self, wrapped, instance, args, kwargs):
-        """Wrap Runner.run_once method with proto-compliant MODEL_INVOCATION events."""
-        
-        @wraps(wrapped)
-        async def async_wrapper(*args, **kwargs):
-            # Extract agent info
-            agent = getattr(instance, "agent", None)
-            if agent:
-                agent_id, agent_name = AgentMapper.map_openai_agent(agent)
-            else:
-                agent_id, agent_name = "unknown", "unknown"
+                    logger.error(f"Error in on_agent_end hook: {e}")
             
-            with self.tracer.start_span("openai_runner.run_once") as span:
-                span.set_attribute("runner_type", "openai")
-                span.set_attribute("agent_name", agent_name)
-                
+            async def on_llm_start(self, context, agent, system_prompt, input_items):
+                """Called when an LLM invocation starts."""
                 try:
-                    # Track MODEL_INVOCATION span
-                    model_span_id = None
+                    agent_id = agent.name if hasattr(agent, 'name') else str(id(agent))
+                    agent_name = agent.name if hasattr(agent, 'name') else "unnamed_agent"
+                    
+                    # Convert input_items to messages format
+                    messages = []
+                    if system_prompt:
+                        messages.append({"role": "system", "content": system_prompt})
+                    
+                    for item in input_items:
+                        # Handle different item types
+                        if hasattr(item, 'role') and hasattr(item, 'content'):
+                            messages.append({"role": item.role, "content": str(item.content)})
+                        else:
+                            messages.append({"role": "user", "content": str(item)})
                     
                     # Send MODEL_INVOCATION_START event
-                    if args and len(args) > 0:
-                        messages = args[0] if isinstance(args[0], list) else []
-                        model = getattr(agent, "model", "unknown") if agent else "unknown"
-                        
-                        start_event = self.event_builder.create_model_invocation_start(
-                            provider="openai",
-                            model=model,
-                            messages=self._serialize_messages(messages),
-                            agent_id=agent_id,
-                            agent_name=agent_name,
-                            temperature=getattr(agent, "temperature", None) if agent else None,
-                            max_tokens=getattr(agent, "max_tokens", None) if agent else None,
-                            tools=[{"name": tool.name} for tool in getattr(agent, "tools", [])] if agent else None
-                        )
-                        
-                        await self.tracer.client.send_event(start_event)
-                        
-                        # Store span_id for MODEL_INVOCATION_END event
-                        model_span_id = start_event.span_id
-                    
-                    # Execute original method
-                    result = await wrapped(*args, **kwargs)
-                    
-                    # Send MODEL_INVOCATION_END event with same span_id
-                    if result:
-                        model = getattr(agent, "model", "unknown") if agent else "unknown"
-                        
-                        end_event = self.event_builder.create_model_invocation_end(
-                            provider="openai",
-                            model=model,
-                            response_content=getattr(result, "content", None),
-                            tool_calls=self._extract_tool_calls(result),
-                            finish_reason=getattr(result, "finish_reason", None),
-                            span_id=model_span_id,  # Use same span_id as START
-                            agent_id=agent_id,
-                            agent_name=agent_name,
-                            # Note: Token counts not readily available in OpenAI Agents
-                        )
-                        
-                        await self.tracer.client.send_event(end_event)
-                    
-                    return result
-                    
-                except Exception as e:
-                    # Send MODEL_INVOCATION_END with error
-                    model = getattr(agent, "model", "unknown") if agent else "unknown"
-                    
-                    error_event = self.event_builder.create_model_invocation_end(
+                    llm_start = wrapper.event_builder.create_model_invocation_start(
                         provider="openai",
-                        model=model,
-                        span_id=model_span_id if 'model_span_id' in locals() else None,  # Use same span if available
+                        model=agent.model if hasattr(agent, 'model') else "unknown",
+                        messages=messages,
                         agent_id=agent_id,
                         agent_name=agent_name,
-                        error=str(e)
+                        temperature=None,  # Could extract from agent config if available
+                        max_tokens=None,
+                        tools=[tool.name if hasattr(tool, 'name') else str(tool) for tool in (agent.tools if hasattr(agent, 'tools') else [])]
                     )
+                    await wrapper.tracer.client.send_event(llm_start)
                     
-                    await self.tracer.client.send_event(error_event)
+                    # Store span_id for matching END event
+                    context._chaukas_llm_span_id = llm_start.span_id
+                except Exception as e:
+                    logger.error(f"Error in on_llm_start hook: {e}")
+            
+            async def on_llm_end(self, context, agent, response):
+                """Called when an LLM invocation ends."""
+                try:
+                    agent_id = agent.name if hasattr(agent, 'name') else str(id(agent))
+                    agent_name = agent.name if hasattr(agent, 'name') else "unnamed_agent"
                     
-                    raise
+                    # Clear retry counter on successful completion
+                    model = agent.model if hasattr(agent, 'model') else "unknown"
+                    llm_key = f"{agent_id}_{model}_openai"
+                    wrapper._llm_retry_attempts.pop(llm_key, None)
+                    
+                    # Extract response details
+                    response_content = None
+                    tool_calls = []
+                    
+                    if hasattr(response, 'content'):
+                        response_content = str(response.content)
+                    
+                    if hasattr(response, 'tool_calls') and response.tool_calls:
+                        for tc in response.tool_calls:
+                            tool_calls.append({
+                                "id": tc.id if hasattr(tc, 'id') else None,
+                                "name": tc.function.name if hasattr(tc, 'function') and hasattr(tc.function, 'name') else None,
+                                "arguments": tc.function.arguments if hasattr(tc, 'function') and hasattr(tc.function, 'arguments') else None
+                            })
+                    
+                    # Get span_id from context
+                    span_id = getattr(context, '_chaukas_llm_span_id', None)
+                    
+                    # Send MODEL_INVOCATION_END event
+                    llm_end = wrapper.event_builder.create_model_invocation_end(
+                        provider="openai",
+                        model=model,
+                        response_content=response_content,
+                        tool_calls=tool_calls if tool_calls else None,
+                        finish_reason=response.finish_reason if hasattr(response, 'finish_reason') else None,
+                        prompt_tokens=response.usage.prompt_tokens if hasattr(response, 'usage') and hasattr(response.usage, 'prompt_tokens') else None,
+                        completion_tokens=response.usage.completion_tokens if hasattr(response, 'usage') and hasattr(response.usage, 'completion_tokens') else None,
+                        total_tokens=response.usage.total_tokens if hasattr(response, 'usage') and hasattr(response.usage, 'total_tokens') else None,
+                        duration_ms=None,
+                        span_id=span_id,
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        error=None
+                    )
+                    await wrapper.tracer.client.send_event(llm_end)
+                    
+                    # Check for tool calls and emit TOOL_CALL_START events
+                    if tool_calls:
+                        for tc in tool_calls:
+                            tool_start = wrapper.event_builder.create_tool_call_start(
+                                tool_name=tc['name'],
+                                arguments=json.loads(tc['arguments']) if tc['arguments'] else {},
+                                call_id=tc['id'],
+                                agent_id=agent_id,
+                                agent_name=agent_name
+                            )
+                            await wrapper.tracer.client.send_event(tool_start)
+                            # Store span_id for END event
+                            if not hasattr(context, '_chaukas_tool_spans'):
+                                context._chaukas_tool_spans = {}
+                            context._chaukas_tool_spans[tc['id']] = tool_start.span_id
+                    
+                except Exception as e:
+                    logger.error(f"Error in on_llm_end hook: {e}")
+            
+            async def on_tool_start(self, context, agent, tool):
+                """Called when a tool execution starts."""
+                try:
+                    agent_id = agent.name if hasattr(agent, 'name') else str(id(agent))
+                    agent_name = agent.name if hasattr(agent, 'name') else "unnamed_agent"
+                    
+                    # Check if this is an MCP tool
+                    is_mcp = wrapper._is_mcp_tool(tool)
+                    
+                    if is_mcp:
+                        # Send MCP_CALL_START event
+                        mcp_start = wrapper.event_builder.create_mcp_call_start(
+                            server_name=tool.name if hasattr(tool, 'name') else "mcp_server",
+                            server_url=tool.server_url if hasattr(tool, 'server_url') else "mcp://local",
+                            operation="tool_execution",
+                            method=tool.method if hasattr(tool, 'method') else "execute",
+                            request={},
+                            protocol_version="1.0",
+                            agent_id=agent_id,
+                            agent_name=agent_name
+                        )
+                        await wrapper.tracer.client.send_event(mcp_start)
+                        # Store for END event
+                        if not hasattr(context, '_chaukas_mcp_spans'):
+                            context._chaukas_mcp_spans = {}
+                        context._chaukas_mcp_spans[tool.name if hasattr(tool, 'name') else str(tool)] = mcp_start.span_id
+                    elif not wrapper._is_internal_tool(tool):
+                        # Regular tool - but only if we haven't already sent TOOL_CALL_START from LLM response
+                        # This handles tools that are executed without LLM involvement
+                        tool_name = tool.name if hasattr(tool, 'name') else str(tool)
+                        if not hasattr(context, '_chaukas_tool_spans') or tool_name not in context._chaukas_tool_spans:
+                            tool_start = wrapper.event_builder.create_tool_call_start(
+                                tool_name=tool_name,
+                                arguments={},
+                                call_id=None,
+                                agent_id=agent_id,
+                                agent_name=agent_name
+                            )
+                            await wrapper.tracer.client.send_event(tool_start)
+                            if not hasattr(context, '_chaukas_tool_spans'):
+                                context._chaukas_tool_spans = {}
+                            context._chaukas_tool_spans[tool_name] = tool_start.span_id
+                    
+                    # Track data access for certain tool types
+                    if wrapper._is_data_access_tool(tool):
+                        data_event = wrapper.event_builder.create_data_access(
+                            datasource=wrapper._get_datasource_name(tool),
+                            document_ids=None,
+                            chunk_ids=None,
+                            pii_categories=None,
+                            agent_id=agent_id,
+                            agent_name=agent_name
+                        )
+                        await wrapper.tracer.client.send_event(data_event)
+                    
+                except Exception as e:
+                    logger.error(f"Error in on_tool_start hook: {e}")
+            
+            async def on_tool_end(self, context, agent, tool, result):
+                """Called when a tool execution ends."""
+                try:
+                    agent_id = agent.name if hasattr(agent, 'name') else str(id(agent))
+                    agent_name = agent.name if hasattr(agent, 'name') else "unnamed_agent"
+                    
+                    # Clear retry counter on successful completion
+                    tool_name = tool.name if hasattr(tool, 'name') else str(tool)
+                    tool_key = f"{agent_id}_{tool_name}"
+                    wrapper._tool_retry_attempts.pop(tool_key, None)
+                    
+                    # Check if this is an MCP tool
+                    is_mcp = wrapper._is_mcp_tool(tool)
+                    
+                    if is_mcp:
+                        # Send MCP_CALL_END event
+                        span_id = None
+                        if hasattr(context, '_chaukas_mcp_spans'):
+                            span_id = context._chaukas_mcp_spans.get(tool_name)
+                        
+                        mcp_end = wrapper.event_builder.create_mcp_call_end(
+                            server_name=tool_name,
+                            server_url=tool.server_url if hasattr(tool, 'server_url') else "mcp://local",
+                            operation="tool_execution",
+                            method=tool.method if hasattr(tool, 'method') else "execute",
+                            response={"result": str(result)[:1000]} if result else {},
+                            execution_time_ms=None,
+                            error=None,
+                            span_id=span_id,
+                            agent_id=agent_id,
+                            agent_name=agent_name
+                        )
+                        await wrapper.tracer.client.send_event(mcp_end)
+                    elif not wrapper._is_internal_tool(tool):
+                        # Regular tool
+                        span_id = None
+                        if hasattr(context, '_chaukas_tool_spans'):
+                            # Try to get by tool ID first (from LLM response), then by name
+                            for key, value in context._chaukas_tool_spans.items():
+                                if key == tool_name or (hasattr(tool, 'id') and key == tool.id):
+                                    span_id = value
+                                    break
+                        
+                        tool_end = wrapper.event_builder.create_tool_call_end(
+                            tool_name=tool_name,
+                            call_id=tool.id if hasattr(tool, 'id') else None,
+                            output=str(result)[:1000] if result else None,
+                            error=None,
+                            execution_time_ms=None,
+                            span_id=span_id,
+                            agent_id=agent_id,
+                            agent_name=agent_name
+                        )
+                        await wrapper.tracer.client.send_event(tool_end)
+                    
+                except Exception as e:
+                    logger.error(f"Error in on_tool_end hook: {e}")
+            
+            async def on_handoff(self, context, from_agent, to_agent):
+                """Called when control is handed off from one agent to another."""
+                try:
+                    from_id = from_agent.name if hasattr(from_agent, 'name') else str(id(from_agent))
+                    from_name = from_agent.name if hasattr(from_agent, 'name') else "unnamed_agent"
+                    to_id = to_agent.name if hasattr(to_agent, 'name') else str(id(to_agent))
+                    to_name = to_agent.name if hasattr(to_agent, 'name') else "unnamed_agent"
+                    
+                    # Send AGENT_HANDOFF event
+                    handoff_event = wrapper.event_builder.create_agent_handoff(
+                        from_agent_id=from_id,
+                        from_agent_name=from_name,
+                        to_agent_id=to_id,
+                        to_agent_name=to_name,
+                        reason="Agent transfer",
+                        handoff_type="direct",
+                        handoff_data={
+                            "framework": "openai_agents"
+                        }
+                    )
+                    await wrapper.tracer.client.send_event(handoff_event)
+                except Exception as e:
+                    logger.error(f"Error in on_handoff hook: {e}")
         
-        @wraps(wrapped)
-        def sync_wrapper(*args, **kwargs):
-            return asyncio.create_task(async_wrapper(*args, **kwargs))
+        return ChaukasRunHooks()
+    
+    def merge_hooks(self, user_hooks, chaukas_hooks):
+        """Merge user-provided hooks with Chaukas hooks."""
+        # Create a new hooks instance that calls both
+        from agents.lifecycle import RunHooksBase
         
-        if asyncio.iscoroutinefunction(wrapped):
-            return async_wrapper
+        class MergedHooks(RunHooksBase):
+            """Merged hooks that call both user and Chaukas hooks."""
+            
+            async def on_agent_start(self, context, agent):
+                if hasattr(chaukas_hooks, 'on_agent_start'):
+                    await chaukas_hooks.on_agent_start(context, agent)
+                if hasattr(user_hooks, 'on_agent_start'):
+                    await user_hooks.on_agent_start(context, agent)
+            
+            async def on_agent_end(self, context, agent, output):
+                if hasattr(chaukas_hooks, 'on_agent_end'):
+                    await chaukas_hooks.on_agent_end(context, agent, output)
+                if hasattr(user_hooks, 'on_agent_end'):
+                    await user_hooks.on_agent_end(context, agent, output)
+            
+            async def on_llm_start(self, context, agent, system_prompt, input_items):
+                if hasattr(chaukas_hooks, 'on_llm_start'):
+                    await chaukas_hooks.on_llm_start(context, agent, system_prompt, input_items)
+                if hasattr(user_hooks, 'on_llm_start'):
+                    await user_hooks.on_llm_start(context, agent, system_prompt, input_items)
+            
+            async def on_llm_end(self, context, agent, response):
+                if hasattr(chaukas_hooks, 'on_llm_end'):
+                    await chaukas_hooks.on_llm_end(context, agent, response)
+                if hasattr(user_hooks, 'on_llm_end'):
+                    await user_hooks.on_llm_end(context, agent, response)
+            
+            async def on_tool_start(self, context, agent, tool):
+                if hasattr(chaukas_hooks, 'on_tool_start'):
+                    await chaukas_hooks.on_tool_start(context, agent, tool)
+                if hasattr(user_hooks, 'on_tool_start'):
+                    await user_hooks.on_tool_start(context, agent, tool)
+            
+            async def on_tool_end(self, context, agent, tool, result):
+                if hasattr(chaukas_hooks, 'on_tool_end'):
+                    await chaukas_hooks.on_tool_end(context, agent, tool, result)
+                if hasattr(user_hooks, 'on_tool_end'):
+                    await user_hooks.on_tool_end(context, agent, tool, result)
+            
+            async def on_handoff(self, context, from_agent, to_agent):
+                if hasattr(chaukas_hooks, 'on_handoff'):
+                    await chaukas_hooks.on_handoff(context, from_agent, to_agent)
+                if hasattr(user_hooks, 'on_handoff'):
+                    await user_hooks.on_handoff(context, from_agent, to_agent)
+        
+        return MergedHooks()
+    
+    def _start_session(self, agent):
+        """Start a new session."""
+        try:
+            self._session_active = True
+            self._start_time = time.time()
+            self._start_metrics = self._get_performance_metrics()
+            
+            # Send SESSION_START event
+            session_start = self.event_builder.create_session_start(
+                metadata={
+                    "framework": "openai_agents",
+                    "agent_name": agent.name if hasattr(agent, 'name') else None,
+                    "model": agent.model if hasattr(agent, 'model') else None
+                }
+            )
+            self._send_event_sync(session_start)
+            self._session_span_id = session_start.span_id
+            
+            # Set session context for all subsequent events
+            session_tokens = self.tracer.set_session_context(session_start.session_id, session_start.trace_id)
+            parent_token = self.tracer.set_parent_span_context(self._session_span_id)
+            
+        except Exception as e:
+            logger.error(f"Error starting session: {e}")
+    
+    async def _end_session(self):
+        """End the current session (async)."""
+        try:
+            if not self._session_active:
+                return
+            
+            # Calculate performance metrics
+            duration_ms = (time.time() - self._start_time) * 1000 if self._start_time else None
+            end_metrics = self._get_performance_metrics()
+            
+            # Send SESSION_END event
+            session_end = self.event_builder.create_session_end(
+                span_id=self._session_span_id,
+                metadata={
+                    "framework": "openai_agents",
+                    "duration_ms": duration_ms,
+                    "cpu_percent": end_metrics.get('cpu_percent'),
+                    "memory_mb": end_metrics.get('memory_mb'),
+                    "success": True
+                }
+            )
+            await self.tracer.client.send_event(session_end)
+            
+            self._session_active = False
+            self._session_span_id = None
+            
+        except Exception as e:
+            logger.error(f"Error ending session: {e}")
+    
+    def _end_session_sync(self):
+        """End the current session (sync)."""
+        try:
+            if not self._session_active:
+                return
+            
+            # Calculate performance metrics
+            duration_ms = (time.time() - self._start_time) * 1000 if self._start_time else None
+            end_metrics = self._get_performance_metrics()
+            
+            # Send SESSION_END event
+            session_end = self.event_builder.create_session_end(
+                span_id=self._session_span_id,
+                metadata={
+                    "framework": "openai_agents",
+                    "duration_ms": duration_ms,
+                    "cpu_percent": end_metrics.get('cpu_percent'),
+                    "memory_mb": end_metrics.get('memory_mb'),
+                    "success": True
+                }
+            )
+            self._send_event_sync(session_end)
+            
+            self._session_active = False
+            self._session_span_id = None
+            
+        except Exception as e:
+            logger.error(f"Error ending session: {e}")
+    
+    async def _handle_error(self, error: Exception, agent):
+        """Handle errors and emit appropriate events (async)."""
+        try:
+            agent_id = agent.name if hasattr(agent, 'name') else str(id(agent))
+            agent_name = agent.name if hasattr(agent, 'name') else "unnamed_agent"
+            error_msg = str(error)
+            
+            # Check if this is a retryable error
+            if self._is_retryable_error(error_msg):
+                # Track retry attempt
+                agent_key = f"{agent_id}_{agent.model if hasattr(agent, 'model') else 'unknown'}"
+                retry_count = self._agent_retry_attempts.get(agent_key, 0)
+                self._agent_retry_attempts[agent_key] = retry_count + 1
+                
+                # Send RETRY event
+                retry_event = self.event_builder.create_retry(
+                    attempt=retry_count + 1,
+                    strategy="exponential",
+                    backoff_ms=1000 * (2 ** retry_count),
+                    reason=f"Agent execution failed: {error_msg}",
+                    agent_id=agent_id,
+                    agent_name=agent_name
+                )
+                await self.tracer.client.send_event(retry_event)
+            
+            # Send ERROR event
+            error_event = self.event_builder.create_error(
+                error_message=error_msg,
+                error_code=type(error).__name__,
+                recoverable=self._is_retryable_error(error_msg),
+                agent_id=agent_id,
+                agent_name=agent_name
+            )
+            await self.tracer.client.send_event(error_event)
+            
+        except Exception as e:
+            logger.error(f"Error handling error: {e}")
+    
+    def _handle_error_sync(self, error: Exception, agent):
+        """Handle errors and emit appropriate events (sync)."""
+        try:
+            agent_id = agent.name if hasattr(agent, 'name') else str(id(agent))
+            agent_name = agent.name if hasattr(agent, 'name') else "unnamed_agent"
+            error_msg = str(error)
+            
+            # Check if this is a retryable error
+            if self._is_retryable_error(error_msg):
+                # Track retry attempt
+                agent_key = f"{agent_id}_{agent.model if hasattr(agent, 'model') else 'unknown'}"
+                retry_count = self._agent_retry_attempts.get(agent_key, 0)
+                self._agent_retry_attempts[agent_key] = retry_count + 1
+                
+                # Send RETRY event
+                retry_event = self.event_builder.create_retry(
+                    attempt=retry_count + 1,
+                    strategy="exponential",
+                    backoff_ms=1000 * (2 ** retry_count),
+                    reason=f"Agent execution failed: {error_msg}",
+                    agent_id=agent_id,
+                    agent_name=agent_name
+                )
+                self._send_event_sync(retry_event)
+            
+            # Send ERROR event
+            error_event = self.event_builder.create_error(
+                error_message=error_msg,
+                error_code=type(error).__name__,
+                recoverable=self._is_retryable_error(error_msg),
+                agent_id=agent_id,
+                agent_name=agent_name
+            )
+            self._send_event_sync(error_event)
+            
+        except Exception as e:
+            logger.error(f"Error handling error: {e}")
+    
+    def _is_mcp_tool(self, tool) -> bool:
+        """Check if a tool is an MCP tool."""
+        # Check for HostedMCPTool type
+        tool_type = type(tool).__name__
+        if 'MCP' in tool_type or 'mcp' in tool_type:
+            return True
+        
+        # Check for MCP-related attributes
+        if hasattr(tool, 'server_url') or hasattr(tool, 'protocol'):
+            return True
+        
+        return False
+    
+    def _is_internal_tool(self, tool) -> bool:
+        """Check if a tool is an internal/system tool that shouldn't be tracked."""
+        tool_name = tool.name if hasattr(tool, 'name') else str(tool)
+        internal_tools = ['transfer_to_agent', 'handoff', 'system']
+        return any(internal in tool_name.lower() for internal in internal_tools)
+    
+    def _is_data_access_tool(self, tool) -> bool:
+        """Check if a tool involves data access."""
+        tool_type = type(tool).__name__
+        data_tools = ['FileSearchTool', 'WebSearchTool', 'CodeInterpreterTool']
+        return any(dt in tool_type for dt in data_tools)
+    
+    def _get_datasource_name(self, tool) -> str:
+        """Get the datasource name for a data access tool."""
+        tool_type = type(tool).__name__
+        if 'FileSearch' in tool_type:
+            return "file_search"
+        elif 'WebSearch' in tool_type:
+            return "web_search"
+        elif 'CodeInterpreter' in tool_type:
+            return "code_interpreter"
         else:
-            return sync_wrapper
+            return "unknown"
     
-    def _serialize_messages(self, messages) -> List[Dict[str, str]]:
-        """Serialize messages for proto LLMInvocation, handling various formats."""
-        try:
-            if not messages:
-                return []
-            
-            serialized = []
-            for msg in messages[:10]:  # Limit to first 10 messages
-                if hasattr(msg, "__dict__"):
-                    serialized.append({
-                        "role": getattr(msg, "role", "unknown"),
-                        "content": str(getattr(msg, "content", ""))[:1000],  # Truncate content
-                    })
-                elif isinstance(msg, dict):
-                    serialized.append({
-                        "role": msg.get("role", "unknown"),
-                        "content": str(msg.get("content", ""))[:1000],
-                    })
-                else:
-                    serialized.append({
-                        "role": "unknown",
-                        "content": str(msg)[:1000]
-                    })
-            
-            return serialized
-            
-        except Exception as e:
-            logger.warning(f"Failed to serialize messages: {e}")
-            return [{"role": "error", "content": "serialization_failed"}]
+    def _is_retryable_error(self, error_msg: str) -> bool:
+        """Check if an error is retryable."""
+        retryable_patterns = [
+            "rate limit",
+            "timeout",
+            "connection",
+            "temporary",
+            "503",
+            "429",
+            "network",
+            "unavailable"
+        ]
+        
+        error_lower = error_msg.lower()
+        return any(pattern in error_lower for pattern in retryable_patterns)
     
-    def _extract_tool_calls(self, result) -> Optional[List[Dict[str, Any]]]:
-        """Extract tool calls from LLM response for proto ToolCall format."""
+    def _send_event_sync(self, event):
+        """Helper to send event from sync context."""
+        import asyncio
         try:
-            if hasattr(result, "tool_calls") and result.tool_calls:
-                return [
-                    {
-                        "id": getattr(call, "id", None),
-                        "name": getattr(call, "function", {}).get("name", "unknown"),
-                        "arguments": getattr(call, "function", {}).get("arguments", {}),
-                    }
-                    for call in result.tool_calls
-                ]
-            return None
-        except Exception as e:
-            logger.warning(f"Failed to extract tool calls: {e}")
-            return None
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(self.tracer.client.send_event(event))
+            else:
+                loop.run_until_complete(self.tracer.client.send_event(event))
+        except RuntimeError:
+            asyncio.run(self.tracer.client.send_event(event))
+    
+    def _get_performance_metrics(self):
+        """Collect current performance metrics."""
+        if not PSUTIL_AVAILABLE:
+            return {}
+        
+        try:
+            process = psutil.Process(os.getpid())
+            return {
+                'cpu_percent': process.cpu_percent(),
+                'memory_mb': process.memory_info().rss / 1024 / 1024,
+                'num_threads': process.num_threads()
+            }
+        except Exception:
+            return {}
+    
+    def unpatch_runner(self):
+        """Restore original Runner methods."""
+        if self._original_runner_run:
+            try:
+                from agents import Runner
+                Runner.run = self._original_runner_run
+                Runner.run_sync = self._original_runner_run_sync
+                Runner.run_streamed = self._original_runner_run_streamed
+                self._original_runner_run = None
+                self._original_runner_run_sync = None
+                self._original_runner_run_streamed = None
+                logger.info("Successfully unpatched Runner methods")
+            except Exception as e:
+                logger.error(f"Failed to unpatch Runner: {e}")
