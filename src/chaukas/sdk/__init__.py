@@ -161,16 +161,16 @@ def disable_chaukas() -> None:
         return
     
     # Close wrappers (including session end events)
-    if _patcher:
-        try:
-            asyncio.run(_patcher.close())
-        except RuntimeError:
-            # If there's already a running loop, schedule it as a task
-            try:
-                loop = asyncio.get_running_loop()
-                asyncio.create_task(_patcher.close())
-            except:
-                pass
+    # if _patcher:
+    #     try:
+    #         asyncio.run(_patcher.close())
+    #     except RuntimeError:
+    #         # If there's already a running loop, schedule it as a task
+    #         try:
+    #             loop = asyncio.get_running_loop()
+    #             asyncio.create_task(_patcher.close())
+    #         except:
+    #             pass
     
     # Close client to flush events
     _close_client_sync()
