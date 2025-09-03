@@ -1,15 +1,15 @@
 """
-Comprehensive OpenAI Agents example demonstrating all supported events.
+Comprehensive OpenAI Agents example demonstrating all supported events with real API calls.
 
 This example showcases:
 - SESSION_START/END lifecycle
 - AGENT_START/END tracking
 - MODEL_INVOCATION_START/END
-- TOOL_CALL_START detection
+- TOOL_CALL_START/END detection
 - INPUT_RECEIVED/OUTPUT_EMITTED
 - ERROR and RETRY events
 
-Supports running with or without actual OpenAI API.
+Requires OPENAI_API_KEY environment variable to be set.
 """
 
 import os
@@ -22,6 +22,13 @@ from datetime import datetime
 from collections import defaultdict
 import time
 
+# Check for API key before proceeding
+if not os.environ.get("OPENAI_API_KEY"):
+    print("❌ Error: OPENAI_API_KEY environment variable is not set")
+    print("Please set your OpenAI API key:")
+    print("  export OPENAI_API_KEY='your-api-key-here'")
+    sys.exit(1)
+
 # Set up environment for Chaukas
 os.environ["CHAUKAS_TENANT_ID"] = "demo_tenant"
 os.environ["CHAUKAS_PROJECT_ID"] = "openai_comprehensive_demo"
@@ -32,267 +39,131 @@ os.environ["CHAUKAS_BATCH_SIZE"] = "1"  # Immediate write for demo
 # Import Chaukas SDK
 from chaukas import sdk as chaukas
 
-
-# ============================================================================
-# Mock OpenAI SDK Implementation (for testing without API key)
-# ============================================================================
-
-class MockTool:
-    """Mock tool that can be called by agents."""
-    
-    def __init__(self, name: str, description: str):
-        self.name = name
-        self.description = description
-        self.call_count = 0
-        self.fail_next = False  # For simulating failures
-    
-    def __call__(self, **kwargs) -> str:
-        """Execute the tool."""
-        self.call_count += 1
-        
-        if self.fail_next:
-            self.fail_next = False
-            raise Exception(f"{self.name} temporarily unavailable")
-        
-        # Simulate different tools
-        if self.name == "web_search":
-            query = kwargs.get("query", "")
-            return f"Found 10 results for '{query}': Latest news, research papers, and tutorials."
-        
-        elif self.name == "calculator":
-            expression = kwargs.get("expression", "")
-            try:
-                result = eval(expression)  # In production, use safer methods
-                return f"Result: {expression} = {result}"
-            except:
-                return f"Error: Could not calculate {expression}"
-        
-        elif self.name == "weather_api":
-            location = kwargs.get("location", "")
-            return f"Weather in {location}: Sunny, 72°F (22°C), light breeze"
-        
-        elif self.name == "mcp_context_fetch":
-            # Simulate an MCP tool - will be detected by name
-            context = kwargs.get("context", "")
-            server_url = kwargs.get("server_url", "mcp://context-server")
-            return f"MCP Context retrieved from {server_url}: {context} - Full document available"
-        
-        elif self.name == "mcp_protocol_adapter":
-            # Another MCP tool - detected by name pattern
-            operation = kwargs.get("operation", "fetch")
-            return f"MCP Protocol Adapter executed operation '{operation}' successfully"
-        
-        elif self.name == "context_server_query":
-            # MCP tool detected by 'context' keyword
-            query = kwargs.get("query", "")
-            return f"Context Server Query: Found relevant context for '{query}'"
-        
-        else:
-            return f"{self.name} executed with args: {kwargs}"
-
-
-class MockToolCall:
-    """Mock tool call from LLM."""
-    
-    def __init__(self, tool_name: str, arguments: Dict):
-        self.id = f"call_{tool_name}_{int(time.time() * 1000)}"
-        self.function = type('Function', (), {
-            'name': tool_name,
-            'arguments': json.dumps(arguments)
-        })()
-
-
-class MockMessage:
-    """Mock message object."""
-    
-    def __init__(self, role: str, content: str, tool_calls: List[MockToolCall] = None):
-        self.role = role
-        self.content = content
-        self.tool_calls = tool_calls
-
-
-class MockChoice:
-    """Mock choice in response."""
-    
-    def __init__(self, message: MockMessage, finish_reason: str = "stop"):
-        self.message = message
-        self.finish_reason = finish_reason
-        self.index = 0
-
-
-class MockResponse:
-    """Mock LLM response."""
-    
-    def __init__(self, content: str = None, tool_calls: List[MockToolCall] = None):
-        self.content = content
-        self.tool_calls = tool_calls
-        self.finish_reason = "stop" if content else "tool_calls"
-        
-        # Build response in OpenAI format
-        message = MockMessage("assistant", content, tool_calls)
-        self.choices = [MockChoice(message, self.finish_reason)]
-        
-        # Token counts (simulated)
-        self.usage = type('Usage', (), {
-            'prompt_tokens': random.randint(50, 200),
-            'completion_tokens': random.randint(20, 150),
-            'total_tokens': 0
-        })()
-        self.usage.total_tokens = self.usage.prompt_tokens + self.usage.completion_tokens
-
-
-class MockRunner:
-    """Mock Runner for LLM invocations."""
-    
-    def __init__(self, agent):
-        self.agent = agent
-        self.invocation_count = 0
-        self.simulate_rate_limit = False
-    
-    async def run_once(self, messages: List[Dict]) -> MockResponse:
-        """Simulate a single LLM invocation."""
-        self.invocation_count += 1
-        
-        # Simulate rate limiting on occasion
-        if self.simulate_rate_limit or (self.invocation_count == 1 and random.random() < 0.3):
-            self.simulate_rate_limit = False
-            raise Exception("Rate limit exceeded - please retry after 1 second")
-        
-        # Simulate service unavailable occasionally
-        if random.random() < 0.1:
-            raise Exception("503 Service Unavailable")
-        
-        # Analyze the last message
-        if not messages:
-            return MockResponse(content="Hello! How can I help you today?")
-        
-        last_msg = messages[-1]
-        content = last_msg.get("content", "").lower()
-        
-        # Simulate tool calling based on content
-        if "search" in content or "find" in content:
-            tool_calls = [MockToolCall("web_search", {"query": content})]
-            return MockResponse(tool_calls=tool_calls)
-        
-        elif "calculate" in content or "math" in content or any(op in content for op in ['+', '-', '*', '/']):
-            # Extract math expression
-            import re
-            expr_match = re.search(r'[\d\s\+\-\*/\(\)]+', content)
-            if expr_match:
-                tool_calls = [MockToolCall("calculator", {"expression": expr_match.group()})]
-                return MockResponse(tool_calls=tool_calls)
-        
-        elif "weather" in content:
-            # Extract location
-            locations = ["New York", "London", "Tokyo", "Paris", "Sydney"]
-            location = next((loc for loc in locations if loc.lower() in content), "New York")
-            tool_calls = [MockToolCall("weather_api", {"location": location})]
-            return MockResponse(tool_calls=tool_calls)
-        
-        # Regular response
-        responses = [
-            f"I understand you're asking about: {content[:50]}",
-            f"Based on your question, here's what I found...",
-            f"Let me help you with that.",
-            f"Here's my analysis of your request.",
-            f"I've processed your query about {content[:30]}..."
-        ]
-        
-        return MockResponse(content=random.choice(responses))
-
-
-class MockAgent:
-    """Mock OpenAI Agent."""
-    
-    def __init__(self, name: str, instructions: str, model: str = "gpt-4", 
-                 tools: List[MockTool] = None, temperature: float = 0.7,
-                 max_tokens: int = 1000):
-        self.name = name
-        self.instructions = instructions
-        self.model = model
-        self.tools = tools or []
-        self.temperature = temperature
-        self.max_tokens = max_tokens
-        self.runner = MockRunner(self)
-        self.run_count = 0
-    
-    async def run(self, messages: List[Dict]) -> MockResponse:
-        """Run the agent with messages."""
-        self.run_count += 1
-        
-        # Simulate occasional agent-level failures
-        if self.run_count == 1 and random.random() < 0.2:
-            raise Exception("Agent initialization failed - retrying")
-        
-        try:
-            # Get LLM response
-            response = await self.runner.run_once(messages)
-            
-            # If we have tool calls, execute them
-            if response.tool_calls and self.tools:
-                for tool_call in response.tool_calls:
-                    tool_name = tool_call.function.name
-                    tool = next((t for t in self.tools if t.name == tool_name), None)
-                    
-                    if tool:
-                        try:
-                            args = json.loads(tool_call.function.arguments)
-                            result = tool(**args)
-                            print(f"  🔧 Tool '{tool_name}' executed: {result[:80]}...")
-                        except Exception as e:
-                            print(f"  ❌ Tool '{tool_name}' failed: {e}")
-                            if "unavailable" in str(e).lower():
-                                raise  # Propagate for retry
-            
-            return response
-            
-        except Exception as e:
-            print(f"  ⚠️  Error: {e}")
-            raise
-
-
-class MockOpenAI:
-    """Mock OpenAI client."""
-    
-    def __init__(self, api_key: str = None):
-        self.api_key = api_key or "mock-key"
+# Import OpenAI Agents SDK
+try:
+    from agents import Agent, Runner, function_tool
+    print("✅ OpenAI Agents SDK loaded successfully")
+except ImportError as e:
+    print("❌ Error: Failed to import OpenAI Agents SDK")
+    print("Please install it with: pip install openai-agents")
+    print(f"Error details: {e}")
+    sys.exit(1)
 
 
 # ============================================================================
-# Real OpenAI SDK Support (if available)
+# Tool Implementations
 # ============================================================================
 
-USE_REAL_OPENAI = False
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+@function_tool
+def web_search(query: str) -> str:
+    """
+    Search the web for information.
+    
+    Args:
+        query: The search query string
+        
+    Returns:
+        Search results as a string
+    """
+    # Simulate web search results
+    results = [
+        f"Recent article about {query} from TechCrunch",
+        f"Wikipedia entry on {query}",
+        f"Academic paper discussing {query}",
+        f"Tutorial on {query} from official documentation"
+    ]
+    return f"Found {len(results)} results for '{query}':\n" + "\n".join(f"- {r}" for r in results)
 
-if OPENAI_API_KEY and '--use-real-api' in sys.argv:
+
+@function_tool
+def calculator(expression: str) -> str:
+    """
+    Perform mathematical calculations.
+    
+    Args:
+        expression: Mathematical expression to evaluate
+        
+    Returns:
+        Calculation result as a string
+    """
     try:
-        from openai import OpenAI
-        from openai.agents import Agent, Runner
-        USE_REAL_OPENAI = True
-        print("✅ Using real OpenAI API")
-    except ImportError:
-        print("⚠️  OpenAI SDK not installed, using mock implementation")
-else:
-    print("ℹ️  Using mock OpenAI implementation (no API key required)")
+        # In production, use a safer evaluation method
+        # For demo purposes, we'll use simple eval with safety checks
+        allowed_chars = "0123456789+-*/()., "
+        if all(c in allowed_chars for c in expression):
+            result = eval(expression)
+            return f"Result: {expression} = {result}"
+        else:
+            return f"Error: Invalid characters in expression '{expression}'"
+    except Exception as e:
+        return f"Error calculating {expression}: {str(e)}"
 
 
-# ============================================================================
-# Monkey-patch for testing
-# ============================================================================
-
-if not USE_REAL_OPENAI:
-    # Create mock modules
-    mock_openai = type(sys)('openai')
-    mock_openai.OpenAI = MockOpenAI
+@function_tool
+def weather_api(location: str) -> str:
+    """
+    Get weather information for a location.
     
-    mock_agents = type(sys)('agents')
-    mock_agents.Agent = MockAgent
-    mock_agents.Runner = MockRunner
+    Args:
+        location: City or location name
+        
+    Returns:
+        Weather information as a string
+    """
+    # Simulate weather API response
+    weather_conditions = ["Sunny", "Partly Cloudy", "Cloudy", "Light Rain", "Clear"]
+    temp_f = random.randint(60, 85)
+    temp_c = round((temp_f - 32) * 5/9)
+    condition = random.choice(weather_conditions)
     
-    mock_openai.agents = mock_agents
-    sys.modules['openai'] = mock_openai
-    sys.modules['openai.agents'] = mock_agents
+    return f"Weather in {location}: {condition}, {temp_f}°F ({temp_c}°C), Humidity: {random.randint(40, 70)}%"
+
+
+@function_tool
+def get_current_time(timezone: str = "UTC") -> str:
+    """
+    Get the current time in a specific timezone.
+    
+    Args:
+        timezone: Timezone name (default: UTC)
+        
+    Returns:
+        Current time as a string
+    """
+    from datetime import datetime, timezone as tz
+    
+    # For simplicity, just return UTC or local time
+    if timezone.upper() == "UTC":
+        current_time = datetime.now(tz.utc)
+        return f"Current time in {timezone}: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+    else:
+        current_time = datetime.now()
+        return f"Current local time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}"
+
+
+@function_tool
+def mcp_context_fetch(context_type: str, query: str, server_url: str = "mcp://context-server") -> str:
+    """
+    Fetch context from MCP (Model Context Protocol) server.
+    This simulates an MCP tool for demonstration purposes.
+    
+    Args:
+        context_type: Type of context to fetch
+        query: Query for context retrieval
+        server_url: MCP server URL
+        
+    Returns:
+        Retrieved context as a string
+    """
+    # Simulate MCP context retrieval
+    contexts = {
+        "documentation": f"Documentation context for {query}: API reference, examples, and best practices",
+        "code": f"Code context for {query}: Implementation details and source code",
+        "data": f"Data context for {query}: Relevant datasets and statistics"
+    }
+    
+    context_result = contexts.get(context_type, f"General context for {query}")
+    return f"MCP Context from {server_url}:\n{context_result}"
 
 
 # ============================================================================
@@ -300,54 +171,53 @@ if not USE_REAL_OPENAI:
 # ============================================================================
 
 async def research_assistant_scenario():
-    """Scenario 1: Research Assistant with web search."""
+    """Scenario 1: Research Assistant with web search and tools."""
     print("\n" + "="*60)
     print("Scenario 1: Research Assistant")
     print("="*60)
     
-    if USE_REAL_OPENAI:
-        from openai import OpenAI
-        from openai.agents import Agent
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        agent = Agent(
-            name="research_assistant",
-            instructions="You are a helpful research assistant that finds and summarizes information.",
-            model="gpt-4",
-            client=client
-        )
-    else:
-        tools = [
-            MockTool("web_search", "Search the web for information"),
-            MockTool("mcp_context_fetch", "Fetch context from MCP server")
-        ]
-        agent = MockAgent(
-            name="research_assistant",
-            instructions="You are a helpful research assistant that finds and summarizes information.",
-            model="gpt-4",
-            tools=tools
-        )
+    # Create research assistant agent
+    agent = Agent(
+        name="research_assistant",
+        instructions="""You are a helpful research assistant that finds and summarizes information.
+        Use the web_search tool to find information on topics.
+        Use the mcp_context_fetch tool for technical documentation.
+        Be concise but thorough in your responses.""",
+        model="gpt-4o-mini",  # Using gpt-4o-mini for cost efficiency
+        tools=[web_search, mcp_context_fetch, get_current_time]
+    )
     
-    conversations = [
-        [{"role": "user", "content": "Find information about quantum computing applications"}],
-        [{"role": "user", "content": "Search for the latest AI developments in 2024"}],
-        [{"role": "user", "content": "What are the best practices for distributed systems?"}]
+    queries = [
+        "What are the latest developments in quantum computing?",
+        "Find information about distributed systems best practices",
+        "What time is it in UTC?"
     ]
     
-    for i, messages in enumerate(conversations, 1):
-        print(f"\n📝 Query {i}: {messages[0]['content']}")
+    for i, query in enumerate(queries, 1):
+        print(f"\n📝 Query {i}: {query}")
         
         try:
-            response = await agent.run(messages)
+            # Run the agent asynchronously
+            result = await Runner.run(agent, query)
             
-            if hasattr(response, 'content') and response.content:
-                print(f"✅ Response: {response.content[:100]}...")
-            elif hasattr(response, 'tool_calls') and response.tool_calls:
-                print(f"🔧 Tools requested: {[tc.function.name for tc in response.tool_calls]}")
-            
+            # Display the final output
+            if result and result.final_output:
+                output = result.final_output[:200] + "..." if len(result.final_output) > 200 else result.final_output
+                print(f"✅ Response: {output}")
+            else:
+                print("✅ Response received (no output)")
+                
         except Exception as e:
             print(f"❌ Error: {e}")
+            # Handle specific API errors
+            if "rate_limit" in str(e).lower():
+                print("  ⏳ Rate limit hit, waiting before retry...")
+                await asyncio.sleep(2)
+            elif "401" in str(e) or "invalid" in str(e).lower():
+                print("  🔑 API key issue detected")
+                break
         
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.5)  # Small delay between queries
 
 
 async def math_tutor_scenario():
@@ -356,44 +226,36 @@ async def math_tutor_scenario():
     print("Scenario 2: Math Tutor")
     print("="*60)
     
-    if USE_REAL_OPENAI:
-        from openai import OpenAI
-        from openai.agents import Agent
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        agent = Agent(
-            name="math_tutor",
-            instructions="You are a friendly math tutor. Help students with calculations and explanations.",
-            model="gpt-3.5-turbo",
-            temperature=0.5,
-            client=client
-        )
-    else:
-        tools = [MockTool("calculator", "Perform mathematical calculations")]
-        agent = MockAgent(
-            name="math_tutor",
-            instructions="You are a friendly math tutor. Help students with calculations and explanations.",
-            model="gpt-3.5-turbo",
-            tools=tools,
-            temperature=0.5
-        )
+    # Create math tutor agent
+    agent = Agent(
+        name="math_tutor",
+        instructions="""You are a friendly math tutor. Help students with calculations and explanations.
+        Use the calculator tool for mathematical computations.
+        Explain your reasoning step by step.""",
+        model="gpt-3.5-turbo",  # More cost-effective model
+        tools=[calculator]
+    )
     
-    conversations = [
-        [{"role": "user", "content": "Calculate 42 * 17 + 238"}],
-        [{"role": "user", "content": "What is (15 + 8) * 3 - 10?"}],
-        [{"role": "user", "content": "Solve: 2x + 5 = 15"}]  # This will just get a response, not calculation
+    problems = [
+        "Calculate 42 * 17 + 238",
+        "What is (15 + 8) * 3 - 10?",
+        "If I have 5 apples and buy 3 more, then give away 2, how many do I have?"
     ]
     
-    for i, messages in enumerate(conversations, 1):
-        print(f"\n📐 Problem {i}: {messages[0]['content']}")
+    for i, problem in enumerate(problems, 1):
+        print(f"\n📐 Problem {i}: {problem}")
         
         try:
-            response = await agent.run(messages)
+            # Run the agent synchronously
+            result = await Runner.run(agent, problem)
             
-            if hasattr(response, 'content') and response.content:
-                print(f"✅ Solution: {response.content[:100]}...")
-            elif hasattr(response, 'tool_calls') and response.tool_calls:
-                print(f"🔧 Calculating with: {[tc.function.name for tc in response.tool_calls]}")
-            
+            # Display the solution
+            if result and result.final_output:
+                output = result.final_output[:200] + "..." if len(result.final_output) > 200 else result.final_output
+                print(f"✅ Solution: {output}")
+            else:
+                print("✅ Solution calculated")
+                
         except Exception as e:
             print(f"❌ Error: {e}")
         
@@ -401,132 +263,179 @@ async def math_tutor_scenario():
 
 
 async def travel_planner_scenario():
-    """Scenario 3: Travel Planner with weather and retry simulation."""
+    """Scenario 3: Travel Planner with weather and search tools."""
     print("\n" + "="*60)
-    print("Scenario 3: Travel Planner (with retry simulation)")
+    print("Scenario 3: Travel Planner")
     print("="*60)
     
-    if USE_REAL_OPENAI:
-        from openai import OpenAI
-        from openai.agents import Agent
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        agent = Agent(
-            name="travel_planner",
-            instructions="You are a travel planning assistant. Help users plan their trips.",
-            model="gpt-4",
-            temperature=0.8,
-            max_tokens=500,
-            client=client
-        )
-    else:
-        tools = [
-            MockTool("weather_api", "Get weather information for a location"),
-            MockTool("web_search", "Search for travel information")
-        ]
-        agent = MockAgent(
-            name="travel_planner",
-            instructions="You are a travel planning assistant. Help users plan their trips.",
-            model="gpt-4",
-            tools=tools,
-            temperature=0.8,
-            max_tokens=500
-        )
-        
-        # Simulate rate limiting for retry demonstration
-        agent.runner.simulate_rate_limit = True
+    # Create travel planner agent
+    agent = Agent(
+        name="travel_planner",
+        instructions="""You are a travel planning assistant. Help users plan their trips.
+        Use the weather_api to check weather conditions.
+        Use web_search to find tourist attractions and travel information.
+        Provide helpful and practical advice.""",
+        model="gpt-4o-mini",
+        tools=[weather_api, web_search, get_current_time]
+    )
     
-    messages = [
-        {"role": "user", "content": "What's the weather like in Paris? I'm planning a trip."},
-        {"role": "assistant", "content": "I'll check the weather in Paris for you."},
-        {"role": "user", "content": "Also, find the best tourist attractions there."}
+    # Multi-turn conversation simulation
+    queries = [
+        "I'm planning a trip to Paris. What's the weather like there?",
+        "What are the top tourist attractions I should visit?",
+        "What's the best time of year to visit?"
     ]
     
-    print(f"🗺️ Multi-turn conversation:")
-    for msg in messages:
-        if msg['role'] == 'user':
-            print(f"  👤 User: {msg['content']}")
-        else:
-            print(f"  🤖 Assistant: {msg['content']}")
+    print(f"🗺️ Travel planning conversation:")
     
-    # Simulate retries
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            print(f"\n  Attempt {attempt + 1}/{max_retries}...")
-            response = await agent.run(messages)
-            
-            if hasattr(response, 'content') and response.content:
-                print(f"  ✅ Response: {response.content[:100]}...")
-            elif hasattr(response, 'tool_calls') and response.tool_calls:
-                print(f"  🔧 Tools used: {[tc.function.name for tc in response.tool_calls]}")
-            
-            break  # Success
-            
-        except Exception as e:
-            print(f"  ⚠️  Error: {e}")
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt  # Exponential backoff
-                print(f"  ⏳ Retrying in {wait_time} seconds...")
-                await asyncio.sleep(wait_time)
-            else:
-                print(f"  ❌ Max retries exceeded")
+    for i, query in enumerate(queries, 1):
+        print(f"\n👤 User: {query}")
+        
+        # Implement retry logic for demonstration
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                print(f"  Attempt {attempt + 1}/{max_retries}...")
+                
+                # Run the agent
+                result = await Runner.run(agent, query)
+                
+                if result and result.final_output:
+                    output = result.final_output[:200] + "..." if len(result.final_output) > 200 else result.final_output
+                    print(f"  🤖 Assistant: {output}")
+                
+                break  # Success, exit retry loop
+                
+            except Exception as e:
+                error_msg = str(e)
+                print(f"  ⚠️  Error: {error_msg}")
+                
+                if attempt < max_retries - 1:
+                    # Exponential backoff
+                    wait_time = 2 ** attempt
+                    print(f"  ⏳ Retrying in {wait_time} seconds...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    print(f"  ❌ Max retries exceeded")
+        
+        await asyncio.sleep(0.5)
 
 
-async def error_scenario():
-    """Scenario 4: Error and recovery demonstration."""
+async def error_handling_scenario():
+    """Scenario 4: Error handling and recovery demonstration."""
     print("\n" + "="*60)
     print("Scenario 4: Error Handling and Recovery")
     print("="*60)
     
-    if USE_REAL_OPENAI:
-        from openai import OpenAI
-        from openai.agents import Agent
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        agent = Agent(
-            name="error_test_agent",
-            instructions="Test agent for error scenarios.",
-            model="gpt-4",
-            client=client
-        )
-    else:
-        tools = [MockTool("web_search", "Search tool that might fail")]
-        # Make the tool fail initially
-        tools[0].fail_next = True
-        
-        agent = MockAgent(
-            name="error_test_agent",
-            instructions="Test agent for error scenarios.",
-            model="gpt-4",
-            tools=tools
-        )
+    # Create an agent for error testing
+    agent = Agent(
+        name="error_test_agent",
+        instructions="""You are a test agent for demonstrating error handling.
+        Try to use tools when asked.
+        Handle errors gracefully.""",
+        model="gpt-4o-mini",
+        tools=[web_search, calculator]
+    )
     
     test_cases = [
-        {"content": "Search for information (will fail first time)", "should_fail": True},
-        {"content": "Simple query that should work", "should_fail": False},
-        {"content": "Another search query", "should_fail": False}
+        "Search for information about error handling in distributed systems",
+        "Calculate the result of 1/0",  # Will cause a calculation error
+        "What happens when an API fails?"
     ]
     
-    for i, test in enumerate(test_cases, 1):
-        print(f"\n🧪 Test {i}: {test['content']}")
-        
-        messages = [{"role": "user", "content": test['content']}]
+    for i, test_query in enumerate(test_cases, 1):
+        print(f"\n🧪 Test {i}: {test_query}")
         
         try:
-            response = await agent.run(messages)
-            print(f"  ✅ Success: Got response")
+            # First attempt
+            result = await Runner.run(agent, test_query)
+            
+            if result and result.final_output:
+                output = result.final_output[:150] + "..." if len(result.final_output) > 150 else result.final_output
+                print(f"  ✅ Success: {output}")
             
         except Exception as e:
             print(f"  ❌ Error captured: {e}")
             
             # Retry once
-            print(f"  ⏳ Retrying...")
+            print(f"  ⏳ Retrying after error...")
             await asyncio.sleep(1)
             
             try:
-                response = await agent.run(messages)
+                result = await Runner.run(agent, test_query)
                 print(f"  ✅ Retry successful!")
+                
             except Exception as e2:
                 print(f"  ❌ Retry also failed: {e2}")
+        
+        await asyncio.sleep(0.5)
+
+
+async def multi_agent_handoff_scenario():
+    """Scenario 5: Multi-agent handoff demonstration."""
+    print("\n" + "="*60)
+    print("Scenario 5: Multi-Agent Handoff")
+    print("="*60)
+    
+    # Create multiple specialized agents
+    researcher = Agent(
+        name="researcher",
+        instructions="You are a research specialist. Find information using web_search.",
+        model="gpt-3.5-turbo",
+        tools=[web_search]
+    )
+    
+    analyst = Agent(
+        name="analyst",
+        instructions="You are a data analyst. Perform calculations and analyze numbers.",
+        model="gpt-3.5-turbo",
+        tools=[calculator]
+    )
+    
+    summarizer = Agent(
+        name="summarizer",
+        instructions="You are a summarization expert. Create concise summaries of information.",
+        model="gpt-3.5-turbo",
+        tools=[]
+    )
+    
+    # Simulate agent handoffs
+    tasks = [
+        ("researcher", "Find information about Python programming best practices"),
+        ("analyst", "Calculate the average of 45, 67, 89, 23, 56"),
+        ("summarizer", "Summarize the key points from the previous responses")
+    ]
+    
+    context = []
+    
+    for agent_name, task in tasks:
+        print(f"\n🤝 Handing off to {agent_name}: {task}")
+        
+        # Select the appropriate agent
+        if agent_name == "researcher":
+            current_agent = researcher
+        elif agent_name == "analyst":
+            current_agent = analyst
+        else:
+            current_agent = summarizer
+        
+        try:
+            # Include context from previous agents
+            full_query = task
+            if context and agent_name == "summarizer":
+                full_query = f"{task}\n\nPrevious context:\n" + "\n".join(context)
+            
+            result = await Runner.run(current_agent, full_query)
+            
+            if result and result.final_output:
+                output = result.final_output[:150] + "..." if len(result.final_output) > 150 else result.final_output
+                print(f"  ✅ {agent_name.capitalize()} response: {output}")
+                context.append(f"{agent_name}: {result.final_output}")
+            
+        except Exception as e:
+            print(f"  ❌ {agent_name.capitalize()} error: {e}")
+        
+        await asyncio.sleep(0.5)
 
 
 # ============================================================================
@@ -619,9 +528,10 @@ def analyze_events(filename: str):
             'SESSION_START', 'SESSION_END',
             'AGENT_START', 'AGENT_END',
             'MODEL_INVOCATION_START', 'MODEL_INVOCATION_END',
-            'TOOL_CALL_START',  # TOOL_CALL_END requires tool execution patching
+            'TOOL_CALL_START', 'TOOL_CALL_END',
             'INPUT_RECEIVED', 'OUTPUT_EMITTED',
-            'ERROR', 'RETRY'
+            'ERROR', 'RETRY',
+            'AGENT_HANDOFF'
         ]
         
         captured = 0
@@ -649,33 +559,33 @@ async def main():
     """Main program with interactive menu."""
     print("="*60)
     print("OpenAI Agents Comprehensive Example")
-    print("Demonstrating Enhanced Event Capture")
+    print("Using Real API with Enhanced Event Capture")
     print("="*60)
+    
+    # Verify API key
+    api_key = os.environ.get("OPENAI_API_KEY")
+    print(f"✅ OpenAI API key detected: {api_key[:10]}...")
     
     # Enable Chaukas instrumentation
     chaukas.enable_chaukas()
     print("✅ Chaukas instrumentation enabled")
     
-    if USE_REAL_OPENAI:
-        print(f"✅ Using real OpenAI API with key: {OPENAI_API_KEY[:10]}...")
-    else:
-        print("ℹ️  Using mock implementation (no API key required)")
-    
     while True:
         print("\n" + "="*60)
         print("Select a scenario to run:")
         print("="*60)
-        print("1. Research Assistant (with web search)")
-        print("2. Math Tutor (with calculator)")
-        print("3. Travel Planner (with retries)")
+        print("1. Research Assistant (web search & tools)")
+        print("2. Math Tutor (calculator)")
+        print("3. Travel Planner (weather & retries)")
         print("4. Error Handling Demo")
-        print("5. Run All Scenarios")
-        print("6. Analyze Captured Events")
+        print("5. Multi-Agent Handoff")
+        print("6. Run All Scenarios")
+        print("7. Analyze Captured Events")
         print("0. Exit")
         print("-"*60)
         
         try:
-            choice = input("Enter your choice (0-6): ").strip()
+            choice = input("Enter your choice (0-7): ").strip()
             
             if choice == '0':
                 break
@@ -686,14 +596,17 @@ async def main():
             elif choice == '3':
                 await travel_planner_scenario()
             elif choice == '4':
-                await error_scenario()
+                await error_handling_scenario()
             elif choice == '5':
+                await multi_agent_handoff_scenario()
+            elif choice == '6':
                 print("\n🚀 Running all scenarios...")
                 await research_assistant_scenario()
                 await math_tutor_scenario()
                 await travel_planner_scenario()
-                await error_scenario()
-            elif choice == '6':
+                await error_handling_scenario()
+                await multi_agent_handoff_scenario()
+            elif choice == '7':
                 analyze_events("openai_comprehensive_output.jsonl")
             else:
                 print("❌ Invalid choice, please try again")
@@ -703,17 +616,16 @@ async def main():
             break
         except Exception as e:
             print(f"❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Cleanup
     print("\n" + "="*60)
     print("Shutting down...")
     
-    # Flush events
-    client = chaukas.get_client()
-    if client:
-        await client.flush()
-        await client.close()
-        print("✅ Events flushed and client closed")
+    # Disable Chaukas (this will close sessions and flush events)
+    chaukas.disable_chaukas()
+    print("✅ Chaukas disabled, sessions closed, and events flushed")
     
     # Final analysis
     print("\n" + "="*60)
@@ -731,13 +643,21 @@ if __name__ == "__main__":
 Usage: python openai_comprehensive_example.py [options]
 
 Options:
-  --use-real-api    Use real OpenAI API (requires OPENAI_API_KEY env var)
   --help           Show this help message
 
 Environment Variables:
-  OPENAI_API_KEY   Your OpenAI API key (required for --use-real-api)
+  OPENAI_API_KEY   Your OpenAI API key (REQUIRED)
 
-By default, uses a mock implementation that doesn't require an API key.
+The example uses the real OpenAI API to demonstrate:
+- Agent creation with tools
+- Asynchronous execution with Runner.run()
+- Tool calling and execution
+- Error handling and retries
+- Multi-agent scenarios
+- Comprehensive event capture with Chaukas SDK
+
+Make sure to set your OPENAI_API_KEY before running:
+  export OPENAI_API_KEY='your-api-key-here'
         """)
         sys.exit(0)
     
@@ -748,4 +668,6 @@ By default, uses a mock implementation that doesn't require an API key.
         print("\n\n👋 Goodbye!")
     except Exception as e:
         print(f"\n❌ Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
