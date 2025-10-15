@@ -62,7 +62,7 @@ class ChaukasClient:
             timeout=self.timeout,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/x-protobuf",
+                "Content-Type": "application/json",
                 "User-Agent": "chaukas-sdk/0.1.0",
             }
         )
@@ -199,35 +199,41 @@ class ChaukasClient:
                 raise
     
     async def _send_events_to_api(self, events: List[Event]) -> None:
-        """Send events to API endpoint."""
+        """Send events to API endpoint using JSON format compatible with chaukas-core."""
         if len(events) == 1:
-            # Send single event
+            # Send single event to /events endpoint
             request = IngestEventRequest()
             request.event.CopyFrom(events[0])
-            
+
+            # Convert protobuf to JSON dict
+            request_dict = MessageToDict(request, preserving_proto_field_name=True)
+
             response = await self._client.post(
-                f"{self.endpoint}/v1/events/ingest",
-                content=request.SerializeToString()
+                f"{self.endpoint}/events",
+                json=request_dict
             )
         else:
-            # Send batch of events
+            # Send batch of events to /events/batch endpoint
             batch = EventBatch()
             batch.events.extend(events)
-            
+
             # Set batch metadata
             from chaukas.sdk.utils.uuid7 import generate_uuid7
-            
+
             batch.batch_id = generate_uuid7()
             batch.timestamp.GetCurrentTime()
-            
+
             request = IngestEventBatchRequest()
             request.event_batch.CopyFrom(batch)
-            
+
+            # Convert protobuf to JSON dict
+            request_dict = MessageToDict(request, preserving_proto_field_name=True)
+
             response = await self._client.post(
-                f"{self.endpoint}/v1/events/ingest-batch",
-                content=request.SerializeToString()
+                f"{self.endpoint}/events/batch",
+                json=request_dict
             )
-        
+
         response.raise_for_status()
     
     async def _write_events_to_file(self, events: List[Event]) -> None:

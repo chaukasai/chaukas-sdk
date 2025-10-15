@@ -8,6 +8,14 @@ import atexit
 import asyncio
 from typing import Optional, Dict, Any
 
+# Load .env file automatically
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv not installed, skip loading
+    pass
+
 from chaukas.sdk.core.client import ChaukasClient
 from chaukas.sdk.core.tracer import ChaukasTracer
 from chaukas.sdk.core.config import ChaukasConfig, get_config, set_config
