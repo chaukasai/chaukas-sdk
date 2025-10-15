@@ -6,6 +6,7 @@ import os
 import logging
 import atexit
 import asyncio
+import weakref
 from typing import Optional, Dict, Any
 
 # Load .env file automatically
@@ -67,16 +68,17 @@ def enable_chaukas(
     project_id: Optional[str] = None,
     session_id: Optional[str] = None,
     config: Optional[Dict[str, Any]] = None,
+    auto_flush: bool = True,
 ) -> None:
     """
     Enable Chaukas instrumentation for agent SDKs with proto compliance.
-    
+
     Required environment variables (if not provided as parameters):
     - CHAUKAS_ENDPOINT: API endpoint
-    - CHAUKAS_API_KEY: API key  
+    - CHAUKAS_API_KEY: API key
     - CHAUKAS_TENANT_ID: Tenant ID
     - CHAUKAS_PROJECT_ID: Project ID
-    
+
     Args:
         endpoint: Override CHAUKAS_ENDPOINT environment variable
         api_key: Override CHAUKAS_API_KEY environment variable
@@ -84,13 +86,14 @@ def enable_chaukas(
         project_id: Override CHAUKAS_PROJECT_ID environment variable
         session_id: Optional session ID for tracing
         config: Additional configuration options
+        auto_flush: Automatically flush events (default: True)
     """
     global _client, _tracer, _patcher, _enabled
-    
+
     if _enabled:
         logger.warning("Chaukas is already enabled")
         return
-    
+
     try:
         # Create or override configuration
         if any([endpoint, api_key, tenant_id, project_id]):
@@ -106,31 +109,69 @@ def enable_chaukas(
         else:
             # Use environment configuration
             chaukas_config = get_config()
-        
+
         # Initialize core components
         _client = ChaukasClient(config=chaukas_config)
         _tracer = ChaukasTracer(client=_client, session_id=session_id)
         _patcher = MonkeyPatcher(tracer=_tracer, config=config or {})
-        
-        # Apply monkey patches
+
+        # Apply monkey patches with auto-flush enabled
         _patcher.patch_all()
-        
+
         _enabled = True
-        
-        # Register cleanup handler to flush events on exit
-        atexit.register(_cleanup_on_exit)
-        
+
+        # Register cleanup handlers
+        if auto_flush:
+            atexit.register(_cleanup_on_exit)
+            # Patch asyncio.run() to auto-flush before event loop closes
+            _patch_asyncio_run()
+
         logger.info("Chaukas instrumentation enabled with proto compliance")
-        
+
     except Exception as e:
         logger.error(f"Failed to enable Chaukas: {e}")
         raise
 
 
+# Store original asyncio.run
+_original_asyncio_run = asyncio.run
+
+
+def _patched_asyncio_run(main, *, debug=None):
+    """Patched version of asyncio.run that flushes events before closing loop."""
+    global _client
+
+    async def _wrapper():
+        try:
+            result = await main
+            # Flush events before loop closes
+            if _client and _enabled:
+                try:
+                    await _client.flush()
+                except Exception as e:
+                    logger.debug(f"Failed to flush events: {e}")
+            return result
+        except Exception:
+            # Still try to flush on error
+            if _client and _enabled:
+                try:
+                    await _client.flush()
+                except Exception as e:
+                    logger.debug(f"Failed to flush events on error: {e}")
+            raise
+
+    return _original_asyncio_run(_wrapper(), debug=debug)
+
+
+def _patch_asyncio_run() -> None:
+    """Patch asyncio.run to auto-flush events."""
+    asyncio.run = _patched_asyncio_run
+
+
 def _cleanup_on_exit() -> None:
     """Cleanup handler called on program exit to flush events."""
     global _enabled
-    
+
     if _enabled:
         logger.debug("Flushing events on program exit...")
         _close_client_sync()
@@ -139,26 +180,34 @@ def _cleanup_on_exit() -> None:
 def _close_client_sync() -> None:
     """Helper to close client from sync context."""
     global _client
-    
+
     if _client is None:
         return
-    
+
     try:
-        # Try to get the running event loop
-        loop = asyncio.get_running_loop()
-        # Schedule the close coroutine as a task
-        asyncio.create_task(_client.close())
-    except RuntimeError:
-        # No running loop, create one to close the client
+        # Check if there's an existing event loop
         try:
-            asyncio.run(_client.close())
-        except Exception as e:
-            logger.warning(f"Failed to close client properly: {e}")
-            # At minimum, try to flush events
+            loop = asyncio.get_running_loop()
+            # We're in an async context, create a task
+            asyncio.create_task(_client.close())
+        except RuntimeError:
+            # No running loop - we need to create a new one
+            # However, during interpreter shutdown, we can't create new loops
+            # So we'll try our best with a new loop, but catch all errors
             try:
-                asyncio.run(_client.flush())
-            except Exception as flush_error:
-                logger.error(f"Failed to flush events: {flush_error}")
+                # Create a new event loop specifically for cleanup
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(_client.close())
+                finally:
+                    loop.close()
+            except Exception as e:
+                # During interpreter shutdown, even this may fail
+                # Log but don't raise - we're shutting down anyway
+                logger.debug(f"Could not properly close client during shutdown: {e}")
+    except Exception as e:
+        logger.debug(f"Cleanup failed: {e}")
 
 
 def disable_chaukas() -> None:
