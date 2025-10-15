@@ -62,7 +62,7 @@ class ChaukasClient:
             timeout=self.timeout,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
+                "Content-Type": "application/x-protobuf",  # Binary protobuf
                 "User-Agent": "chaukas-sdk/0.1.0",
             }
         )
@@ -199,18 +199,18 @@ class ChaukasClient:
                 raise
     
     async def _send_events_to_api(self, events: List[Event]) -> None:
-        """Send events to API endpoint using JSON format compatible with chaukas-core."""
+        """Send events to API endpoint using binary protobuf format."""
         if len(events) == 1:
             # Send single event to /events endpoint
             request = IngestEventRequest()
             request.event.CopyFrom(events[0])
 
-            # Convert protobuf to JSON dict
-            request_dict = MessageToDict(request, preserving_proto_field_name=True)
+            # Serialize to binary protobuf
+            binary_data = request.SerializeToString()
 
             response = await self._client.post(
                 f"{self.endpoint}/events",
-                json=request_dict
+                content=binary_data  # Binary protobuf, not JSON
             )
         else:
             # Send batch of events to /events/batch endpoint
@@ -226,12 +226,12 @@ class ChaukasClient:
             request = IngestEventBatchRequest()
             request.event_batch.CopyFrom(batch)
 
-            # Convert protobuf to JSON dict
-            request_dict = MessageToDict(request, preserving_proto_field_name=True)
+            # Serialize to binary protobuf
+            binary_data = request.SerializeToString()
 
             response = await self._client.post(
                 f"{self.endpoint}/events/batch",
-                json=request_dict
+                content=binary_data  # Binary protobuf, not JSON
             )
 
         response.raise_for_status()
