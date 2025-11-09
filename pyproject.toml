@@ -32,7 +32,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-openai = ["openai-agents"]
+openai = ["openai-agents>=0.5.0"]
 google = ["adk"]
 crewai = ["crewai"]
 dev = [

@@ -39,7 +39,7 @@ The enhanced OpenAI Agents integration provides comprehensive event capture with
 ### 1. Enhanced Wrapper Class
 
 ```python
-class OpenAIAgentsEnhancedWrapper(BaseIntegrationWrapper):
+class OpenAIAgentsWrapper(BaseIntegrationWrapper):
     """
     Leverages reusable components:
     - BaseIntegrationWrapper for common functionality
@@ -238,7 +238,7 @@ Run the comprehensive test suite:
 pytest tests/test_openai_events.py -v
 
 # Run with coverage
-pytest tests/test_openai_events.py --cov=chaukas.sdk.integrations.openai_agents_enhanced
+pytest tests/test_openai_events.py --cov=chaukas.sdk.integrations.openai_agents
 ```
 
 ## Examples
@@ -324,7 +324,7 @@ logging.getLogger("chaukas.sdk").setLevel(logging.DEBUG)
 To add support for additional events:
 
 1. Identify the hook point in OpenAI SDK
-2. Update `OpenAIAgentsEnhancedWrapper` class
+2. Update `OpenAIAgentsWrapper` class
 3. Add event creation logic using `event_builder`
 4. Update tests in `test_openai_events.py`
 5. Update this documentation
