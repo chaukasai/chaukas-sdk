@@ -8,7 +8,7 @@ One-line instrumentation for agent building SDKs. Provides comprehensive observa
 - **Automatic SDK detection**: Supports OpenAI Agents, Google ADK, and CrewAI out of the box
 - **Distributed tracing**: Full session, trace, and span tracking with parent-child relationships
 - **Unified schema**: Normalizes events from different SDKs into consistent format
-- **100% Event Coverage**: Captures all 20 chaukas-spec event types including retry attempts
+- **100% Event Coverage**: Captures all 19 chaukas-spec event types including retry attempts
 - **Comprehensive observability**: Tracks LLM calls, tool usage, agent handoffs, retries, errors, and lifecycle events
 - **Immutable audit trail**: All events are preserved for deep analysis and compliance
 
@@ -16,9 +16,9 @@ One-line instrumentation for agent building SDKs. Provides comprehensive observa
 
 | SDK | Event Coverage | Key Features |
 |-----|---------------|--------------|
-| [CrewAI](https://github.com/crewAIInc/crewAI) | **100%** (20/20) | Full event bus integration, retry tracking, multi-agent handoffs |
-| [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) | **80%** (16/20) | Session management, retry detection, tool tracking, I/O events |
-| [Google ADK Python](https://github.com/google/adk-python) | **25%** (5/20) | Basic agent and LLM tracking |
+| [CrewAI](https://github.com/crewAIInc/crewAI) | **100%** (19/19) 🎉 | Full event bus integration, retry tracking, multi-agent handoffs |
+| [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) | **100%** (19/19) 🎉 | Session management, MCP support, policy tracking, state updates, retry detection |
+| [Google ADK Python](https://github.com/google/adk-python) | **26%** (5/19) | Basic agent and LLM tracking |
 
 ## Quick Start
 
@@ -187,7 +187,7 @@ mypy chaukas/
 
 ## Event Coverage
 
-The SDK achieves **100% coverage** of all 20 chaukas-spec event types:
+The SDK achieves **100% coverage** of all 19 chaukas-spec event types:
 
 ### Session & Agent Events
 - `SESSION_START` / `SESSION_END` - Track entire user sessions
