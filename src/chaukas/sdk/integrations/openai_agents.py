@@ -45,6 +45,9 @@ class OpenAIAgentsWrapper:
         self._llm_retry_attempts = {}
         self._tool_retry_attempts = {}
         self._agent_retry_attempts = {}
+        # MCP patching
+        self._original_mcp_get_prompt = None
+        self._original_mcp_call_tool = None
     
     def patch_runner(self):
         """Apply patches to OpenAI Runner methods."""
@@ -60,9 +63,11 @@ class OpenAIAgentsWrapper:
             
             # Patch async run method
             @functools.wraps(wrapper._original_runner_run)
-            async def instrumented_run(starting_agent, input_data, **kwargs):
+            async def instrumented_run(starting_agent, input=None, **kwargs):
                 """Instrumented version of Runner.run()."""
-                
+                # Handle both 'input' and 'input_data' parameter names
+                input_data = input if input is not None else kwargs.pop('input_data', None)
+
                 # Start session if not active
                 if not wrapper._session_active:
                     wrapper._start_session(starting_agent)
@@ -110,9 +115,11 @@ class OpenAIAgentsWrapper:
             
             # Patch sync run method
             @functools.wraps(wrapper._original_runner_run_sync)
-            def instrumented_run_sync(starting_agent, input_data, **kwargs):
+            def instrumented_run_sync(starting_agent, input=None, **kwargs):
                 """Instrumented version of Runner.run_sync()."""
-                
+                # Handle both 'input' and 'input_data' parameter names
+                input_data = input if input is not None else kwargs.pop('input_data', None)
+
                 # Start session if not active
                 if not wrapper._session_active:
                     wrapper._start_session(starting_agent)
@@ -158,9 +165,11 @@ class OpenAIAgentsWrapper:
             
             # Patch streamed run method
             @functools.wraps(wrapper._original_runner_run_streamed)
-            async def instrumented_run_streamed(starting_agent, input_data, **kwargs):
+            async def instrumented_run_streamed(starting_agent, input=None, **kwargs):
                 """Instrumented version of Runner.run_streamed()."""
-                
+                # Handle both 'input' and 'input_data' parameter names
+                input_data = input if input is not None else kwargs.pop('input_data', None)
+
                 # Start session if not active
                 if not wrapper._session_active:
                     wrapper._start_session(starting_agent)
@@ -215,7 +224,171 @@ class OpenAIAgentsWrapper:
         except Exception as e:
             logger.error(f"Failed to patch Runner: {e}")
             return False
-    
+
+    def patch_mcp_server(self):
+        """Apply patches to MCP Server methods to capture MCP_CALL events."""
+        logger.debug("patch_mcp_server called")
+        try:
+            from agents.mcp import MCPServer
+            from agents.mcp.server import _MCPServerWithClientSession
+            logger.debug(f"Successfully imported MCPServer: {MCPServer}")
+            logger.debug(f"Successfully imported _MCPServerWithClientSession: {_MCPServerWithClientSession}")
+        except (ImportError, AttributeError) as e:
+            logger.debug(f"MCP not available, skipping MCP server patching: {e}")
+            return False
+
+        try:
+            # Store original methods from _MCPServerWithClientSession (used by MCPServerStreamableHttp)
+            self._original_mcp_get_prompt = _MCPServerWithClientSession.get_prompt
+            self._original_mcp_call_tool = _MCPServerWithClientSession.call_tool
+
+            wrapper = self
+
+            # Patch get_prompt method
+            @functools.wraps(wrapper._original_mcp_get_prompt)
+            async def instrumented_get_prompt(self, name: str, arguments: dict = None):
+                """Instrumented version of MCPServer.get_prompt()."""
+                start_time = time.time()
+                server_name = self.name if hasattr(self, 'name') else "mcp_server"
+                server_url = getattr(self, 'url', None) or getattr(self, '_url', None) or "mcp://local"
+
+                # Send MCP_CALL_START event
+                mcp_start = wrapper.event_builder.create_mcp_call_start(
+                    server_name=server_name,
+                    server_url=str(server_url),
+                    operation="get_prompt",
+                    method="get_prompt",
+                    request={"prompt_name": name, "arguments": arguments or {}},
+                    protocol_version="1.0"
+                )
+                await wrapper.tracer.client.send_event(mcp_start)
+
+                try:
+                    # Execute original method
+                    result = await wrapper._original_mcp_get_prompt(self, name, arguments)
+
+                    # Calculate execution time
+                    execution_time_ms = (time.time() - start_time) * 1000
+
+                    # Send MCP_CALL_END event
+                    mcp_end = wrapper.event_builder.create_mcp_call_end(
+                        server_name=server_name,
+                        server_url=str(server_url),
+                        operation="get_prompt",
+                        method="get_prompt",
+                        response={
+                            "prompt_name": name,
+                            "message_count": len(result.messages) if hasattr(result, 'messages') else 0
+                        },
+                        execution_time_ms=execution_time_ms,
+                        error=None,
+                        span_id=mcp_start.span_id
+                    )
+                    await wrapper.tracer.client.send_event(mcp_end)
+
+                    return result
+
+                except Exception as e:
+                    # Calculate execution time
+                    execution_time_ms = (time.time() - start_time) * 1000
+
+                    # Send MCP_CALL_END event with error
+                    mcp_end = wrapper.event_builder.create_mcp_call_end(
+                        server_name=server_name,
+                        server_url=str(server_url),
+                        operation="get_prompt",
+                        method="get_prompt",
+                        response={},
+                        execution_time_ms=execution_time_ms,
+                        error=str(e),
+                        span_id=mcp_start.span_id
+                    )
+                    await wrapper.tracer.client.send_event(mcp_end)
+                    raise
+
+            # Patch call_tool method
+            @functools.wraps(wrapper._original_mcp_call_tool)
+            async def instrumented_call_tool(self, tool_name: str, arguments: dict = None):
+                """Instrumented version of MCPServer.call_tool()."""
+                start_time = time.time()
+                server_name = self.name if hasattr(self, 'name') else "mcp_server"
+                server_url = getattr(self, 'url', None) or getattr(self, '_url', None) or "mcp://local"
+
+                # Send MCP_CALL_START event
+                mcp_start = wrapper.event_builder.create_mcp_call_start(
+                    server_name=server_name,
+                    server_url=str(server_url),
+                    operation="call_tool",
+                    method="call_tool",
+                    request={"tool_name": tool_name, "arguments": arguments or {}},
+                    protocol_version="1.0"
+                )
+                await wrapper.tracer.client.send_event(mcp_start)
+
+                try:
+                    # Execute original method
+                    result = await wrapper._original_mcp_call_tool(self, tool_name, arguments)
+
+                    # Calculate execution time
+                    execution_time_ms = (time.time() - start_time) * 1000
+
+                    # Send MCP_CALL_END event
+                    response_data = {
+                        "tool_name": tool_name,
+                        "content_count": len(result.content) if hasattr(result, 'content') else 0
+                    }
+                    if hasattr(result, 'content') and result.content:
+                        # Include first content item (truncated)
+                        first_content = result.content[0]
+                        if hasattr(first_content, 'text'):
+                            response_data["preview"] = str(first_content.text)[:200]
+
+                    mcp_end = wrapper.event_builder.create_mcp_call_end(
+                        server_name=server_name,
+                        server_url=str(server_url),
+                        operation="call_tool",
+                        method="call_tool",
+                        response=response_data,
+                        execution_time_ms=execution_time_ms,
+                        error=None,
+                        span_id=mcp_start.span_id
+                    )
+                    await wrapper.tracer.client.send_event(mcp_end)
+
+                    return result
+
+                except Exception as e:
+                    # Calculate execution time
+                    execution_time_ms = (time.time() - start_time) * 1000
+
+                    # Send MCP_CALL_END event with error
+                    mcp_end = wrapper.event_builder.create_mcp_call_end(
+                        server_name=server_name,
+                        server_url=str(server_url),
+                        operation="call_tool",
+                        method="call_tool",
+                        response={},
+                        execution_time_ms=execution_time_ms,
+                        error=str(e),
+                        span_id=mcp_start.span_id
+                    )
+                    await wrapper.tracer.client.send_event(mcp_end)
+                    raise
+
+            # Apply patches to _MCPServerWithClientSession (which MCPServerStreamableHttp inherits from)
+            _MCPServerWithClientSession.get_prompt = instrumented_get_prompt
+            _MCPServerWithClientSession.call_tool = instrumented_call_tool
+
+            logger.info("Successfully patched MCP Server methods (_MCPServerWithClientSession)")
+            return True
+
+        except ImportError:
+            logger.debug("MCP not available, skipping MCP server patching")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to patch MCP Server: {e}")
+            return False
+
     def create_custom_hooks(self):
         """Create custom RunHooks implementation for event capture."""
         from agents.lifecycle import RunHooksBase
@@ -308,7 +481,7 @@ class OpenAIAgentsWrapper:
                     # Store span_id for matching END event
                     context._chaukas_llm_span_id = llm_start.span_id
                 except Exception as e:
-                    logger.error(f"Error in on_llm_start hook: {e}")
+                    logger.error(f"Error in on_llm_start hook: {e}", exc_info=True)
             
             async def on_llm_end(self, context, agent, response):
                 """Called when an LLM invocation ends."""
@@ -374,7 +547,7 @@ class OpenAIAgentsWrapper:
                             context._chaukas_tool_spans[tc['id']] = tool_start.span_id
                     
                 except Exception as e:
-                    logger.error(f"Error in on_llm_end hook: {e}")
+                    logger.error(f"Error in on_llm_end hook: {e}", exc_info=True)
             
             async def on_tool_start(self, context, agent, tool):
                 """Called when a tool execution starts."""
