@@ -306,8 +306,8 @@ class EventBuilder:
         
         # Create LLMInvocation message
         llm = LLMInvocation()
-        llm.provider = provider
-        llm.model = model
+        llm.provider = provider if provider else "unknown"
+        llm.model = model if model else "unknown"
         
         # Set request data
         request_data = {
@@ -364,8 +364,8 @@ class EventBuilder:
         
         # Create LLMInvocation message
         llm = LLMInvocation()
-        llm.provider = provider
-        llm.model = model
+        llm.provider = provider if provider else "unknown"
+        llm.model = model if model else "unknown"
         
         # Set response data
         response_data = {}

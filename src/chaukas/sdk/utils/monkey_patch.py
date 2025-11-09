@@ -118,9 +118,12 @@ class MonkeyPatcher:
         from chaukas.sdk.integrations.openai_agents import OpenAIAgentsWrapper
         wrapper = OpenAIAgentsWrapper(self.tracer)
         self._wrappers.append(wrapper)  # Store wrapper for cleanup
-        
+
         # Apply patches to Runner methods
         wrapper.patch_runner()
+
+        # Apply patches to MCP Server methods (if available)
+        wrapper.patch_mcp_server()
     
     def _patch_crewai(self) -> None:
         """Apply patches for CrewAI."""
