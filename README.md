@@ -71,7 +71,7 @@ Set your environment variables (or pass them programmatically):
 ```bash
 export CHAUKAS_TENANT_ID="your-tenant"
 export CHAUKAS_PROJECT_ID="your-project"
-export CHAUKAS_ENDPOINT="https://api.chaukas.com"
+export CHAUKAS_ENDPOINT="https://api.chaukas.ai"
 export CHAUKAS_API_KEY="your-api-key"
 ```
 
@@ -776,7 +776,7 @@ chaukas.enable_chaukas(config={
 
 ## 📚 Documentation
 
-- **[Full Documentation](https://docs.chaukas.com)** - Complete API reference
+- **[Full Documentation](https://docs.chaukas.ai)** - Complete API reference
 - **[OpenAI Events Guide](./docs/OPENAI_EVENTS.md)** - OpenAI Agents event details
 - **[CrewAI Events Guide](./docs/CREWAI_EVENTS.md)** - CrewAI event details
 - **[Architecture Deep Dive](./docs/ARCHITECTURE.md)** - Technical architecture
@@ -871,14 +871,14 @@ We love contributions! Whether it's:
 - **[Discord](https://discord.gg/chaukas)** - Chat with the community
 - **[GitHub Discussions](https://github.com/chaukas/chaukas-sdk/discussions)** - Ask questions, share ideas
 - **[Twitter](https://twitter.com/chaukasai)** - Follow for updates
-- **[Blog](https://blog.chaukas.com)** - Technical articles and guides
+- **[Blog](https://blog.chaukas.ai)** - Technical articles and guides
 - **[YouTube](https://youtube.com/chaukas)** - Video tutorials
 
 ## 📬 Support
 
 - **[GitHub Issues](https://github.com/chaukas/chaukas-sdk/issues)** - Bug reports and feature requests
-- **[Email](mailto:support@chaukas.com)** - Direct support
-- **[Documentation](https://docs.chaukas.com)** - Comprehensive guides
+- **[Email](mailto:support@chaukas.ai)** - Direct support
+- **[Documentation](https://docs.chaukas.ai)** - Comprehensive guides
 - **[Stack Overflow](https://stackoverflow.com/questions/tagged/chaukas)** - Community Q&A (tag: `chaukas`)
 
 ## 📄 License
@@ -891,6 +891,6 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 **Built with ❤️ by the Chaukas team**
 
-[Website](https://chaukas.com) • [Documentation](https://docs.chaukas.com) • [GitHub](https://github.com/chaukas)
+[Website](https://chaukas.ai) • [Documentation](https://docs.chaukas.ai) • [GitHub](https://github.com/chaukas)
 
 </div>
