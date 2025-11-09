@@ -2,11 +2,11 @@
 
 ## Overview
 
-The enhanced OpenAI Agents integration provides comprehensive event capture with **84% coverage** (16 out of 19 event types) from the chaukas-spec. This document details which events are supported, which are not, and the technical implementation details.
+The enhanced OpenAI Agents integration provides **100% event coverage** (all 19 event types) from the chaukas-spec. This document details the implementation and usage of each event type.
 
 ## Event Coverage Summary
 
-### ✅ Supported Events (16/19 - 84% Coverage)
+### ✅ Supported Events (19/19 - 100% Coverage) 🎉
 
 | Event Type | Description | Implementation Details |
 |------------|-------------|------------------------|
@@ -26,14 +26,9 @@ The enhanced OpenAI Agents integration provides comprehensive event capture with
 | **MCP_CALL_START** | MCP server call initiated | Patched _MCPServerWithClientSession.get_prompt/call_tool |
 | **MCP_CALL_END** | MCP server call completed | Includes server name, operation, execution time |
 | **DATA_ACCESS** | Data/knowledge retrieval | Detected via tool type (FileSearch, WebSearch, etc.) |
-
-### ❌ Unsupported Events (3/19 - 16% Gap)
-
-| Event Type | Why Not Supported | Workaround |
-|------------|-------------------|------------|
-| **POLICY_DECISION** | Policy decisions not exposed by SDK | Would need OpenAI to expose guardrail events |
-| **STATE_UPDATE** | Internal agent state not observable | Could track high-level state changes |
-| **SYSTEM_EVENT** | Generic system events not clearly defined | Could emit for init/config changes |
+| **POLICY_DECISION** | Policy/content filtering decisions | Detected from LLM finish_reason (content_filter, length limit) |
+| **STATE_UPDATE** | Agent state/configuration changes | Tracks model, instructions, tools, temperature changes |
+| **SYSTEM_EVENT** | System lifecycle events | Emitted for SDK initialization, patching, agent lifecycle |
 
 ## Implementation Architecture
 
@@ -273,13 +268,15 @@ Expected output:
 
 | Feature | OpenAI Agents | CrewAI | Google ADK |
 |---------|---------------|---------|------------|
-| **Event Coverage** | 84% (16/19) | 100% (19/19) | 26% (5/19) |
+| **Event Coverage** | 100% (19/19) 🎉 | 100% (19/19) | 26% (5/19) |
 | **RETRY Support** | ✅ Yes | ✅ Yes | ❌ No |
 | **Session Management** | ✅ Yes | ✅ Yes | ❌ No |
 | **Tool Tracking** | ✅ Yes | ✅ Yes | ❌ No |
 | **I/O Events** | ✅ Yes | ✅ Yes | ❌ No |
 | **MCP Support** | ✅ Yes | ❌ No | ❌ No |
 | **Multi-Agent** | ✅ Yes (Handoff) | ✅ Yes | ❌ No |
+| **Policy Tracking** | ✅ Yes | ✅ Yes | ❌ No |
+| **State Tracking** | ✅ Yes | ✅ Yes | ❌ No |
 
 ## Troubleshooting
 

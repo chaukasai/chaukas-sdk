@@ -48,6 +48,8 @@ class OpenAIAgentsWrapper:
         # MCP patching
         self._original_mcp_get_prompt = None
         self._original_mcp_call_tool = None
+        # Track agent state for STATE_UPDATE events
+        self._agent_states = {}
     
     def patch_runner(self):
         """Apply patches to OpenAI Runner methods."""
@@ -214,8 +216,12 @@ class OpenAIAgentsWrapper:
             Runner.run = instrumented_run
             Runner.run_sync = instrumented_run_sync
             Runner.run_streamed = instrumented_run_streamed
-            
+
             logger.info("Successfully patched OpenAI Runner methods")
+
+            # Emit SYSTEM_EVENT for successful patching
+            self._emit_system_event_sync("OpenAI Runner methods successfully patched", "INFO")
+
             return True
             
         except ImportError:
@@ -404,7 +410,24 @@ class OpenAIAgentsWrapper:
                     # Extract agent info
                     agent_id = agent.name if hasattr(agent, 'name') else str(id(agent))
                     agent_name = agent.name if hasattr(agent, 'name') else "unnamed_agent"
-                    
+
+                    # Check if this is first time seeing this agent
+                    is_first_run = agent_id not in wrapper._agent_states
+
+                    # Track agent state changes and emit STATE_UPDATE (always emit on first run or changes)
+                    state_diff = wrapper._track_agent_state(agent_id, agent)
+                    if state_diff:
+                        await wrapper._emit_state_update(agent_id, agent_name, state_diff)
+
+                    # Emit SYSTEM_EVENT for agent initialization (first run only)
+                    if is_first_run:
+                        await wrapper._emit_system_event(
+                            f"Agent '{agent_name}' initialized with model {agent.model if hasattr(agent, 'model') else 'unknown'}",
+                            "INFO",
+                            agent_id=agent_id,
+                            agent_name=agent_name
+                        )
+
                     # Send AGENT_START event
                     agent_start = wrapper.event_builder.create_agent_start(
                         agent_id=agent_id,
@@ -529,7 +552,28 @@ class OpenAIAgentsWrapper:
                         error=None
                     )
                     await wrapper.tracer.client.send_event(llm_end)
-                    
+
+                    # Check for content filtering/moderation (POLICY_DECISION)
+                    finish_reason = response.finish_reason if hasattr(response, 'finish_reason') else None
+                    if finish_reason in ['content_filter', 'content_policy', 'moderation']:
+                        await wrapper._emit_policy_decision(
+                            policy_id="openai_content_policy",
+                            outcome="blocked",
+                            rule_ids=["content_filter"],
+                            rationale=f"Response blocked due to: {finish_reason}",
+                            agent_id=agent_id,
+                            agent_name=agent_name
+                        )
+                    elif finish_reason == 'length':
+                        await wrapper._emit_policy_decision(
+                            policy_id="openai_length_policy",
+                            outcome="truncated",
+                            rule_ids=["max_tokens_limit"],
+                            rationale="Response truncated due to length limit",
+                            agent_id=agent_id,
+                            agent_name=agent_name
+                        )
+
                     # Check for tool calls and emit TOOL_CALL_START events
                     if tool_calls:
                         for tc in tool_calls:
@@ -996,3 +1040,103 @@ class OpenAIAgentsWrapper:
                 logger.info("Successfully unpatched Runner methods")
             except Exception as e:
                 logger.error(f"Failed to unpatch Runner: {e}")
+
+    # New event type support - POLICY_DECISION, STATE_UPDATE, SYSTEM_EVENT
+
+    def _emit_system_event_sync(self, message: str, severity_str: str = "INFO"):
+        """Emit a SYSTEM_EVENT synchronously."""
+        try:
+            from chaukas.spec.common.v1.events_pb2 import Severity
+
+            severity_map = {
+                "DEBUG": Severity.SEVERITY_DEBUG,
+                "INFO": Severity.SEVERITY_INFO,
+                "WARNING": Severity.SEVERITY_WARNING,
+                "ERROR": Severity.SEVERITY_ERROR,
+                "CRITICAL": Severity.SEVERITY_CRITICAL
+            }
+            severity = severity_map.get(severity_str, Severity.SEVERITY_INFO)
+
+            system_event = self.event_builder.create_system_event(
+                message=message,
+                severity=severity,
+                metadata={"framework": "openai_agents"}
+            )
+            self._send_event_sync(system_event)
+        except Exception as e:
+            logger.debug(f"Failed to emit system event: {e}")
+
+    async def _emit_system_event(self, message: str, severity_str: str = "INFO", agent_id: Optional[str] = None, agent_name: Optional[str] = None):
+        """Emit a SYSTEM_EVENT asynchronously."""
+        try:
+            from chaukas.spec.common.v1.events_pb2 import Severity
+
+            severity_map = {
+                "DEBUG": Severity.SEVERITY_DEBUG,
+                "INFO": Severity.SEVERITY_INFO,
+                "WARNING": Severity.SEVERITY_WARNING,
+                "ERROR": Severity.SEVERITY_ERROR,
+                "CRITICAL": Severity.SEVERITY_CRITICAL
+            }
+            severity = severity_map.get(severity_str, Severity.SEVERITY_INFO)
+
+            system_event = self.event_builder.create_system_event(
+                message=message,
+                severity=severity,
+                metadata={"framework": "openai_agents"},
+                agent_id=agent_id,
+                agent_name=agent_name
+            )
+            await self.tracer.client.send_event(system_event)
+        except Exception as e:
+            logger.debug(f"Failed to emit system event: {e}")
+
+    async def _emit_state_update(self, agent_id: str, agent_name: str, state_data: Dict[str, Any]):
+        """Emit a STATE_UPDATE event."""
+        try:
+            state_event = self.event_builder.create_state_update(
+                state_data=state_data,
+                agent_id=agent_id,
+                agent_name=agent_name
+            )
+            await self.tracer.client.send_event(state_event)
+        except Exception as e:
+            logger.debug(f"Failed to emit state update event: {e}")
+
+    async def _emit_policy_decision(self, policy_id: str, outcome: str, rule_ids: List[str], rationale: Optional[str] = None, agent_id: Optional[str] = None, agent_name: Optional[str] = None):
+        """Emit a POLICY_DECISION event."""
+        try:
+            policy_event = self.event_builder.create_policy_decision(
+                policy_id=policy_id,
+                outcome=outcome,
+                rule_ids=rule_ids,
+                rationale=rationale,
+                agent_id=agent_id,
+                agent_name=agent_name
+            )
+            await self.tracer.client.send_event(policy_event)
+        except Exception as e:
+            logger.debug(f"Failed to emit policy decision event: {e}")
+
+    def _track_agent_state(self, agent_id: str, agent) -> Dict[str, Any]:
+        """Track agent state changes and return state diff."""
+        current_state = {
+            "model": agent.model if hasattr(agent, 'model') else None,
+            "instructions": agent.instructions if hasattr(agent, 'instructions') else None,
+            "tools_count": len(agent.tools) if hasattr(agent, 'tools') and agent.tools else 0,
+            "temperature": getattr(agent, 'temperature', None),
+            "max_tokens": getattr(agent, 'max_tokens', None),
+        }
+
+        # Check if state has changed
+        previous_state = self._agent_states.get(agent_id, {})
+        state_diff = {}
+
+        for key, value in current_state.items():
+            if key not in previous_state or previous_state[key] != value:
+                state_diff[key] = {"old": previous_state.get(key), "new": value}
+
+        # Update stored state
+        self._agent_states[agent_id] = current_state
+
+        return state_diff if state_diff else None
