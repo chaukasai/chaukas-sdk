@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Enhanced OpenAI Agents Integration** - Achieved 80% event coverage (16/20 events)
-  - Created `OpenAIAgentsEnhancedWrapper` using base classes and utilities
+  - Created `OpenAIAgentsWrapper` using base classes and utilities
   - Added SESSION_START/END lifecycle tracking
   - Added TOOL_CALL_START tracking from LLM responses
   - Added INPUT_RECEIVED and OUTPUT_EMITTED for I/O tracking

@@ -16,19 +16,19 @@ os.environ["CHAUKAS_API_KEY"] = "test-key"
 
 from chaukas.sdk.core.tracer import ChaukasTracer
 from chaukas.sdk.core.client import ChaukasClient
-from chaukas.sdk.integrations.openai_agents_enhanced import OpenAIAgentsEnhancedWrapper
+from chaukas.sdk.integrations.openai_agents import OpenAIAgentsWrapper
 
 
 class TestOpenAIAgentsEnhanced:
     """Test the enhanced OpenAI Agents wrapper."""
-    
+
     def setup_method(self):
         """Set up test fixtures."""
         self.client = Mock(spec=ChaukasClient)
         self.client.send_event = AsyncMock()
         self.tracer = Mock(spec=ChaukasTracer)
         self.tracer.client = self.client
-        self.wrapper = OpenAIAgentsEnhancedWrapper(self.tracer)
+        self.wrapper = OpenAIAgentsWrapper(self.tracer)
     
     @pytest.mark.asyncio
     async def test_agent_run_captures_session_events(self):
