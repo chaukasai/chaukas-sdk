@@ -525,20 +525,20 @@ for i in range(100):
 ┌─────────────────────────────────────────────────────────────┐
 │  Your Application                                           │
 │                                                             │
-│  ┌─────────────┐         ┌──────────────┐                 │
-│  │ OpenAI      │         │   CrewAI     │                 │
-│  │ Agent       │         │   Crew       │                 │
-│  └──────┬──────┘         └──────┬───────┘                 │
-│         │                       │                          │
-│         └───────────┬───────────┘                          │
-│                     │                                      │
-│         ┌───────────▼───────────┐                         │
-│         │  Chaukas SDK          │   (Monkey patching)     │
-│         │  - Auto-detection     │                         │
-│         │  - Event capture      │                         │
-│         │  - Distributed trace  │                         │
-│         └───────────┬───────────┘                         │
-│                     │                                      │
+│  ┌─────────────┐         ┌──────────────┐                   │
+│  │ OpenAI      │         │   CrewAI     │                   │
+│  │ Agent       │         │   Crew       │                   │
+│  └──────┬──────┘         └──────┬───────┘                   │
+│         │                       │                           │
+│         └───────────┬───────────┘                           │
+│                     │                                       │
+│         ┌───────────▼───────────┐                           │
+│         │  Chaukas SDK          │   (Monkey patching)       │
+│         │  - Auto-detection     │                           │
+│         │  - Event capture      │                           │
+│         │  - Distributed trace  │                           │
+│         └───────────┬───────────┘                           │
+│                     │                                       │
 └─────────────────────┼──────────────────────────────────────┘
                       │
           ┌───────────▼───────────┐
@@ -868,18 +868,15 @@ We love contributions! Whether it's:
 
 ## 🌟 Community
 
-- **[Discord](https://discord.gg/chaukas)** - Chat with the community
+- **[Discord](https://discord.gg/chaukasai)** - Chat with the community
 - **[GitHub Discussions](https://github.com/chaukas/chaukas-sdk/discussions)** - Ask questions, share ideas
-- **[Twitter](https://twitter.com/chaukasai)** - Follow for updates
-- **[Blog](https://blog.chaukas.ai)** - Technical articles and guides
-- **[YouTube](https://youtube.com/chaukas)** - Video tutorials
 
 ## 📬 Support
 
 - **[GitHub Issues](https://github.com/chaukas/chaukas-sdk/issues)** - Bug reports and feature requests
 - **[Email](mailto:support@chaukas.ai)** - Direct support
 - **[Documentation](https://docs.chaukas.ai)** - Comprehensive guides
-- **[Stack Overflow](https://stackoverflow.com/questions/tagged/chaukas)** - Community Q&A (tag: `chaukas`)
+- **[Stack Overflow](https://stackoverflow.com/questions/tagged/chaukasai)** - Community Q&A (tag: `chaukas`)
 
 ## 📄 License
 
@@ -891,6 +888,6 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 **Built with ❤️ by the Chaukas team**
 
-[Website](https://chaukas.ai) • [Documentation](https://docs.chaukas.ai) • [GitHub](https://github.com/chaukas)
+[Website](https://chaukas.ai) • [Documentation](https://docs.chaukas.ai) • [GitHub](https://github.com/chaukasai)
 
 </div>
