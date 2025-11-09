@@ -8,15 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Enhanced OpenAI Agents Integration** - Achieved 80% event coverage (16/20 events)
+- **MCP (Model Context Protocol) Event Support for OpenAI Agents** - NEW! 🎉
+  - Added MCP_CALL_START and MCP_CALL_END event capture
+  - Patches `_MCPServerWithClientSession` for proper method interception
+  - Captures `get_prompt()` and `call_tool()` operations with full context
+  - Includes server name, URL, operation type, request/response data, execution time
+  - Works with `MCPServerStreamableHttp` and other MCP server implementations
+  - Increased OpenAI Agents coverage from 80% to 84% (14/19 → 16/19 events)
+
+- **Enhanced OpenAI Agents Integration** - Achieved 84% event coverage (16/19 events)
   - Created `OpenAIAgentsWrapper` using base classes and utilities
   - Added SESSION_START/END lifecycle tracking
-  - Added TOOL_CALL_START tracking from LLM responses
+  - Added TOOL_CALL_START/END tracking from LLM responses
   - Added INPUT_RECEIVED and OUTPUT_EMITTED for I/O tracking
   - Added RETRY event support with intelligent error detection
+  - Added AGENT_HANDOFF for multi-agent control transfer
+  - Added DATA_ACCESS for tool-based data retrieval tracking
   - Session management with automatic start/end
   - Comprehensive test suite with 10+ test cases
-  - Working example with retry simulation
+  - Working examples with retry simulation and MCP integration
 
 - **RETRY Event Support for CrewAI Integration** - Achieved 100% chaukas-spec event coverage
   - Implemented automatic retry detection for LLM calls, tool executions, and task failures
@@ -35,7 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Enhanced
 - **OpenAI Agents Support**
-  - Increased event coverage from 25% to 80% (5 events → 16 events)
+  - Increased event coverage from 25% to 84% (5 events → 16 events)
+  - Added MCP protocol support (unique to OpenAI Agents integration)
   - MonkeyPatcher now uses enhanced wrapper when available
   - Automatic fallback to standard wrapper for compatibility
 
