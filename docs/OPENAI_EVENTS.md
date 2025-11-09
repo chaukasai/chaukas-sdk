@@ -2,11 +2,11 @@
 
 ## Overview
 
-The enhanced OpenAI Agents integration provides comprehensive event capture with **80% coverage** (16 out of 20 event types) from the chaukas-spec. This document details which events are supported, which are not, and the technical implementation details.
+The enhanced OpenAI Agents integration provides comprehensive event capture with **84% coverage** (16 out of 19 event types) from the chaukas-spec. This document details which events are supported, which are not, and the technical implementation details.
 
 ## Event Coverage Summary
 
-### ✅ Supported Events (16/20 - 80% Coverage)
+### ✅ Supported Events (16/19 - 84% Coverage)
 
 | Event Type | Description | Implementation Details |
 |------------|-------------|------------------------|
@@ -22,17 +22,18 @@ The enhanced OpenAI Agents integration provides comprehensive event capture with
 | **OUTPUT_EMITTED** | Agent output generated | Captured from agent response content |
 | **ERROR** | Error occurred | Comprehensive error tracking with context |
 | **RETRY** | Retry attempt made | Intelligent detection of retryable errors |
+| **AGENT_HANDOFF** | Multi-agent control transfer | Captured via on_handoff hook |
+| **MCP_CALL_START** | MCP server call initiated | Patched _MCPServerWithClientSession.get_prompt/call_tool |
+| **MCP_CALL_END** | MCP server call completed | Includes server name, operation, execution time |
+| **DATA_ACCESS** | Data/knowledge retrieval | Detected via tool type (FileSearch, WebSearch, etc.) |
 
-### ❌ Unsupported Events (4/20 - 20% Gap)
+### ❌ Unsupported Events (3/19 - 16% Gap)
 
 | Event Type | Why Not Supported | Workaround |
 |------------|-------------------|------------|
-| **MCP_CALL_START/END** | OpenAI doesn't use Model Context Protocol | Could add heuristic detection for MCP-like tools |
-| **AGENT_HANDOFF** | No native multi-agent support in OpenAI SDK | Would require custom orchestration layer |
 | **POLICY_DECISION** | Policy decisions not exposed by SDK | Would need OpenAI to expose guardrail events |
-| **DATA_ACCESS** | No built-in knowledge/data retrieval system | Could detect via tool names (e.g., "database_query") |
 | **STATE_UPDATE** | Internal agent state not observable | Could track high-level state changes |
-| **SYSTEM** | Generic system events not clearly defined | Could emit for init/config changes |
+| **SYSTEM_EVENT** | Generic system events not clearly defined | Could emit for init/config changes |
 
 ## Implementation Architecture
 
@@ -270,15 +271,15 @@ Expected output:
 
 ## Comparison with Other Integrations
 
-| Feature | OpenAI Enhanced | CrewAI | Google ADK |
-|---------|----------------|---------|------------|
-| **Event Coverage** | 80% (16/20) | 100% (20/20) | 25% (5/20) |
+| Feature | OpenAI Agents | CrewAI | Google ADK |
+|---------|---------------|---------|------------|
+| **Event Coverage** | 84% (16/19) | 100% (19/19) | 26% (5/19) |
 | **RETRY Support** | ✅ Yes | ✅ Yes | ❌ No |
 | **Session Management** | ✅ Yes | ✅ Yes | ❌ No |
 | **Tool Tracking** | ✅ Yes | ✅ Yes | ❌ No |
 | **I/O Events** | ✅ Yes | ✅ Yes | ❌ No |
-| **Event Bus** | ❌ No | ✅ Yes | ❌ No |
-| **Multi-Agent** | ❌ No | ✅ Yes | ❌ No |
+| **MCP Support** | ✅ Yes | ❌ No | ❌ No |
+| **Multi-Agent** | ✅ Yes (Handoff) | ✅ Yes | ❌ No |
 
 ## Troubleshooting
 
@@ -313,11 +314,11 @@ logging.getLogger("chaukas.sdk").setLevel(logging.DEBUG)
 
 ### Potential Enhancements
 
-1. **MCP Detection**: Add heuristic detection for MCP-like tools
-2. **State Tracking**: Implement high-level state change detection
-3. **Tool Execution**: Patch tool execution for TOOL_CALL_END events
+1. **State Tracking**: Implement high-level state change detection
+2. **Policy Decisions**: Add detection for content filtering/guardrails
+3. **System Events**: Define and emit system lifecycle events
 4. **Custom Events**: Allow user-defined event types
-5. **Metrics Collection**: Add performance metrics (latency, token usage)
+5. **Enhanced Metrics**: Add more performance metrics (latency percentiles, cache hits)
 
 ### Contributing
 
@@ -336,10 +337,10 @@ To add support for additional events:
 No code changes required! The enhanced wrapper is automatically used when available:
 
 ```python
-# Before (standard wrapper - 25% coverage)
+# Before (standard wrapper - 40% coverage)
 chaukas.enable_chaukas()
 
-# After (enhanced wrapper - 80% coverage)
+# After (enhanced wrapper with MCP - 84% coverage)
 chaukas.enable_chaukas()  # Same code, more events!
 ```
 
