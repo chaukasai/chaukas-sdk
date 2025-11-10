@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chaukas-sdk"
+version = "0.1.0"
+description = "One-line instrumentation for agent building SDKs"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Chaukas", email = "sid@chaukas.ai"},
+]
+keywords = [
+    "ai", "agents", "observability", "instrumentation", "tracing",
+    "openai", "crewai", "langchain", "monitoring", "telemetry",
+    "llm", "agentic", "chaukas-spec"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "chaukas-spec-client>=1.0.0",
+    "wrapt>=1.14.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.24.0",
+    "typing-extensions>=4.0.0",
+    "protobuf>=5.26.0",
+    "grpcio>=1.50.0",
+    "uuid6>=2024.1.12",
+    "aiofiles>=23.0.0",
+]
+
+[project.urls]
+Homepage = "https://chaukas.ai"
+Repository = "https://github.com/chaukasai/chaukas-sdk"
+Documentation = "https://github.com/chaukasai/chaukas-sdk#readme"
+Issues = "https://github.com/chaukasai/chaukas-sdk/issues"
+Changelog = "https://github.com/chaukasai/chaukas-sdk/blob/main/CHANGELOG.md"
+Spec = "https://github.com/chaukasai/chaukas-spec"
+
+[project.optional-dependencies]
+openai = ["openai-agents>=0.5.0,<1.0.0"]
+google = ["adk"]
+crewai = ["crewai>=1.4.1,<2.0.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.10.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
