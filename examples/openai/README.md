@@ -1,247 +1,147 @@
 # OpenAI Agents SDK Examples
 
-Comprehensive examples demonstrating the Chaukas SDK integration with OpenAI Agents SDK.
+Examples demonstrating Chaukas SDK integration with OpenAI Agents.
 
-## Event Coverage: 16/20 (80%)
+## Quick Start
 
-**Captured Events:**
-- ✅ SESSION_START/END - Session lifecycle tracking
-- ✅ AGENT_START/END - Agent execution lifecycle
-- ✅ MODEL_INVOCATION_START/END - LLM API calls
-- ✅ TOOL_CALL_START/END - Tool execution tracking
-- ✅ INPUT_RECEIVED - User input capture
-- ✅ OUTPUT_EMITTED - Agent response tracking
-- ✅ ERROR - Error and exception tracking
-- ✅ RETRY - Retry attempt detection
-- ✅ AGENT_HANDOFF - Agent-to-agent handoffs
+### 1. Setup Environment
 
-**Not Captured** (framework limitations):
-- ❌ MCP_CALL_START/END - No native MCP support in OpenAI SDK
-- ❌ POLICY_DECISION - Not exposed by OpenAI Agents SDK
-- ❌ DATA_ACCESS - No data access layer
-- ❌ STATE_UPDATE - State changes not observable
+Copy the example environment file and add your OpenAI API key:
 
-## Examples
-
-### 1. openai_comprehensive_example.py
-
-**The flagship example** - Full-featured demonstration with real API calls and 5 different scenarios.
-
-**Features:**
-- Real OpenAI API integration (requires API key)
-- Interactive menu with 5 comprehensive scenarios
-- Custom tool implementations (`@function_tool` decorator)
-- Built-in event analysis and reporting
-- Error handling with retry logic
-- Multi-agent handoff demonstration
-
-**Scenarios:**
-1. Research Assistant - Web search and MCP tools
-2. Math Tutor - Calculator tool usage
-3. Travel Planner - Weather API with retries
-4. Error Handling Demo - Recovery strategies
-5. Multi-Agent Handoff - Agent collaboration
-
-**Usage:**
 ```bash
-export OPENAI_API_KEY="sk-..."
-python openai_comprehensive_example.py
+cd examples/openai
+cp .env.example .env
 ```
 
-### 2. openai_simple.py
+Edit `.env` and set your OpenAI API key:
 
-**Quick start example** - Minimal boilerplate, single agent interaction.
-
-**Features:**
-- Simplest possible integration
-- Automatic event capture with zero configuration
-- Perfect for understanding the basics
-
-**Usage:**
 ```bash
-export OPENAI_API_KEY="sk-..."
+OPENAI_API_KEY=sk-your-actual-api-key-here
+```
+
+### 2. Run Examples
+
+**Simple Example** - Basic agent interaction:
+```bash
 python openai_simple.py
 ```
 
-### 3. openai_tools_example.py
-
-**Tool-focused example** - Demonstrates tool calling patterns and TOOL_CALL event capture.
-
-**Features:**
-- Multiple tool implementations
-- Tool execution tracking
-- Tool error handling
-- Performance metrics
-
-**Usage:**
+**Comprehensive Example** - Interactive menu with 8 scenarios:
 ```bash
-export OPENAI_API_KEY="sk-..."
-python openai_tools_example.py
+python openai_comprehensive_example.py
 ```
 
-### 4. openai_retry_example.py
+That's it! Events are automatically captured to `.jsonl` files.
 
-**Retry logic demonstration** - Shows retry detection and error recovery patterns.
+## Examples
 
-**Features:**
-- Simulated API failures
-- Exponential backoff strategies
-- RETRY event capture
-- Error recovery patterns
+### openai_simple.py
+Minimal example - perfect for getting started.
 
-**Usage:**
+### openai_comprehensive_example.py
+Interactive menu with 8 scenarios demonstrating all event types:
+1. Research Assistant (web search & tools)
+2. Math Tutor (calculator)
+3. Travel Planner (weather & retries)
+4. Error Handling Demo
+5. Multi-Agent Handoff
+6. Policy Decision & Content Safety
+7. Data Access & Retrieval Tracking
+8. MCP Integration (requires MCP server)
+
+### Other Examples
+- `openai_tools_example.py` - Tool calling patterns
+- `openai_retry_example.py` - Retry and error recovery
+- `openai_handoff_message_filter.py` - Agent handoffs with message filtering
+- `openai_sqllite_session_example.py` - Session persistence with SQLite
+
+## Configuration
+
+All configuration is in `.env`:
+
 ```bash
-export OPENAI_API_KEY="sk-..."
-python openai_retry_example.py
+# Required
+OPENAI_API_KEY=sk-...
+
+# Chaukas Configuration (optional)
+CHAUKAS_OUTPUT_MODE=file                    # "file" or "api"
+CHAUKAS_OUTPUT_FILE=openai_output.jsonl    # Output file for events
+CHAUKAS_BATCH_SIZE=1                       # Events per batch
+
+# For API mode (optional)
+# CHAUKAS_ENDPOINT=https://api.chaukas.ai
+# CHAUKAS_API_KEY=your-chaukas-api-key
+# CHAUKAS_TENANT_ID=your-tenant
+# CHAUKAS_PROJECT_ID=your-project
 ```
 
-### 5. openai_handoff_message_filter.py
+## Viewing Events
 
-**Agent handoff example** - Demonstrates multi-agent collaboration with message filtering.
+Events are saved as JSONL files. View them with `jq`:
 
-**Features:**
-- Agent-to-agent handoffs
-- Message filtering between agents
-- Context propagation
-- Specialized agent roles
-
-**Usage:**
 ```bash
-export OPENAI_API_KEY="sk-..."
-python openai_handoff_message_filter.py
-```
+# View all events
+cat openai_output.jsonl | jq '.'
 
-### 6. openai_sqllite_session_example.py
+# Count event types
+cat openai_output.jsonl | jq -r '.type' | sort | uniq -c
 
-**Session management example** - Shows session persistence with SQLite storage.
-
-**Features:**
-- Session state persistence
-- SQLite integration
-- Multi-turn conversations
-- Session restoration
-
-**Usage:**
-```bash
-export OPENAI_API_KEY="sk-..."
-python openai_sqllite_session_example.py
+# View specific events
+cat openai_output.jsonl | jq 'select(.type == "EVENT_TYPE_TOOL_CALL_START")'
 ```
 
 ## Requirements
 
 ```bash
-# Install OpenAI Agents SDK
-pip install "openai-agents>=0.5.0"
-
-# Install Chaukas SDK
-pip install chaukas-sdk
-
-# Or install with OpenAI integration
-pip install "chaukas-sdk[openai]"
-
-# Set your OpenAI API key
-export OPENAI_API_KEY="sk-..."
+pip install "openai-agents>=0.5.0,<1.0.0" chaukas-sdk
 ```
 
-## Configuration
+## Event Coverage
 
-### Required Environment Variables
+The comprehensive example captures **17/19 event types (89%)**:
 
+✅ Captured:
+- SESSION_START/END
+- AGENT_START/END
+- AGENT_HANDOFF
+- MODEL_INVOCATION_START/END
+- TOOL_CALL_START/END
+- MCP_CALL_START/END (when MCP server is running)
+- INPUT_RECEIVED/OUTPUT_EMITTED
+- ERROR
+- STATE_UPDATE
+- POLICY_DECISION
+- DATA_ACCESS
+
+❌ Not captured:
+- RETRY (requires real API failures)
+- SYSTEM (system-level events)
+
+## MCP Integration
+
+To run the MCP scenario:
+
+1. Start the MCP server (separate terminal):
 ```bash
-export OPENAI_API_KEY="sk-..."  # Your OpenAI API key
+cd mcp/prompt-server
+python server.py
 ```
 
-### Optional Chaukas Configuration
-
-```bash
-# Output mode (default: file)
-export CHAUKAS_OUTPUT_MODE="file"  # or "api"
-export CHAUKAS_OUTPUT_FILE="events.jsonl"
-
-# For API mode
-export CHAUKAS_OUTPUT_MODE="api"
-export CHAUKAS_ENDPOINT="https://api.chaukas.com"
-export CHAUKAS_API_KEY="your-chaukas-api-key"
-export CHAUKAS_TENANT_ID="your-tenant"
-export CHAUKAS_PROJECT_ID="your-project"
-
-# Batching configuration
-export CHAUKAS_BATCH_SIZE="1"  # Immediate write for demos
-export CHAUKAS_FLUSH_INTERVAL="5.0"  # Flush interval in seconds
-```
-
-## Analyzing Events
-
-All examples output events to JSONL files. Analyze them using:
-
-```bash
-# View all events
-cat events.jsonl | jq '.'
-
-# Count event types
-cat events.jsonl | jq -r '.type' | sort | uniq -c
-
-# Filter specific events
-cat events.jsonl | jq 'select(.type == "TOOL_CALL_START")'
-
-# View agent timeline
-cat events.jsonl | jq 'select(.type | startswith("AGENT_"))'
-
-# Check for errors
-cat events.jsonl | jq 'select(.type == "ERROR")'
-```
+2. Run comprehensive example and select option 8
 
 ## Troubleshooting
 
-### API Key Issues
-
+**Missing API key:**
 ```
 ❌ Error: OPENAI_API_KEY environment variable is not set
 ```
+→ Add your API key to `.env`
 
-**Solution:** Set your OpenAI API key:
-```bash
-export OPENAI_API_KEY="sk-..."
-```
-
-### Rate Limits
-
-If you encounter rate limits:
-- Use a lower tier model (e.g., `gpt-3.5-turbo` instead of `gpt-4`)
-- Add delays between requests
-- Upgrade your OpenAI account tier
-- The retry examples include exponential backoff
-
-### Import Errors
-
+**Module not found:**
 ```
 ModuleNotFoundError: No module named 'agents'
 ```
+→ Run `pip install "openai-agents>=0.5.0,<1.0.0"`
 
-**Solution:** Install OpenAI Agents SDK:
-```bash
-pip install openai-agents
-```
-
-## Best Practices
-
-1. **Always set OPENAI_API_KEY** - Required for all examples
-2. **Start with openai_simple.py** - Understand the basics first
-3. **Use file mode for testing** - Set `CHAUKAS_OUTPUT_MODE="file"`
-4. **Review captured events** - Use jq to analyze event output
-5. **Handle errors gracefully** - See retry_example.py for patterns
-
-## Further Reading
-
-- [OpenAI Agents SDK Documentation](https://platform.openai.com/docs/agents)
-- [Chaukas SDK Documentation](https://docs.chaukas.com)
-- [Event Schema Reference](../../docs/OPENAI_EVENTS.md)
-
-## Contributing
-
-To add new OpenAI examples:
-1. Place files in this directory
-2. Follow the existing naming pattern: `openai_*.py`
-3. Include comprehensive comments and docstrings
-4. Add error handling and retry logic
-5. Update this README with the new example
+**Rate limits:**
+→ The examples use `gpt-4o-mini` to minimize costs and rate limits

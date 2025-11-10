@@ -2,44 +2,48 @@
 Chaukas SDK - One-line instrumentation for agent building SDKs.
 """
 
-import os
-import logging
-import atexit
 import asyncio
+import atexit
+import logging
+import os
 import weakref
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 # Load .env file automatically
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     # dotenv not installed, skip loading
     pass
 
+from chaukas.sdk.core.agent_mapper import AgentMapper
 from chaukas.sdk.core.client import ChaukasClient
-from chaukas.sdk.core.tracer import ChaukasTracer
 from chaukas.sdk.core.config import ChaukasConfig, get_config, set_config
 from chaukas.sdk.core.event_builder import EventBuilder
 from chaukas.sdk.core.proto_wrapper import EventWrapper
-from chaukas.sdk.core.agent_mapper import AgentMapper
+from chaukas.sdk.core.tracer import ChaukasTracer
 from chaukas.sdk.utils.monkey_patch import MonkeyPatcher
 
 __version__ = "0.1.0"
 
 # Export proto messages for advanced usage
 try:
-    from chaukas.spec.common.v1 import events_pb2
     from chaukas.spec.client.v1 import client_pb2
+    from chaukas.spec.common.v1 import events_pb2
 except ImportError as e:
     import logging
-    logging.warning(f"Failed to import proto modules: {e}. Proto features will not be available.")
+
+    logging.warning(
+        f"Failed to import proto modules: {e}. Proto features will not be available."
+    )
     events_pb2 = None
     client_pb2 = None
 
 __all__ = [
     "enable_chaukas",
-    "disable_chaukas", 
+    "disable_chaukas",
     "is_enabled",
     "get_tracer",
     "get_client",
@@ -213,10 +217,10 @@ def _close_client_sync() -> None:
 def disable_chaukas() -> None:
     """Disable Chaukas instrumentation and restore original methods."""
     global _client, _tracer, _patcher, _enabled
-    
+
     if not _enabled:
         return
-    
+
     # Close wrappers (including session end events)
     # if _patcher:
     #     try:
@@ -228,18 +232,18 @@ def disable_chaukas() -> None:
     #             asyncio.create_task(_patcher.close())
     #         except:
     #             pass
-    
+
     # Close client to flush events
     _close_client_sync()
-    
+
     if _patcher:
         _patcher.unpatch_all()
-    
+
     _client = None
     _tracer = None
     _patcher = None
     _enabled = False
-    
+
     logger.info("Chaukas instrumentation disabled")
 
 

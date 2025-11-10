@@ -3,6 +3,13 @@ from __future__ import annotations
 import json
 import os
 import random
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from the same directory as this script
+script_dir = Path(__file__).parent
+load_dotenv(script_dir / ".env")
 
 from agents import Agent, HandoffInputData, Runner, function_tool, handoff, trace
 from agents.extensions import handoff_filters
@@ -17,6 +24,7 @@ os.environ["CHAUKAS_BATCH_SIZE"] = "1"  # Immediate write for demo
 
 # Import and enable Chaukas SDK
 from chaukas import sdk as chaukas
+
 chaukas.enable_chaukas()
 
 
@@ -26,7 +34,9 @@ def random_number_tool(max: int) -> int:
     return random.randint(0, max)
 
 
-def spanish_handoff_message_filter(handoff_message_data: HandoffInputData) -> HandoffInputData:
+def spanish_handoff_message_filter(
+    handoff_message_data: HandoffInputData,
+) -> HandoffInputData:
     if is_gpt_5_default():
         print("gpt-5 is enabled, so we're not filtering the input history")
         # when using gpt-5, removing some of the items could break things, so we do this filtering only for other models
@@ -87,7 +97,12 @@ async def main():
         result = await Runner.run(
             first_agent,
             input=result.to_input_list()
-            + [{"content": "Can you generate a random number between 0 and 100?", "role": "user"}],
+            + [
+                {
+                    "content": "Can you generate a random number between 0 and 100?",
+                    "role": "user",
+                }
+            ],
         )
 
         print("Step 2 done")

@@ -2,15 +2,16 @@
 Example usage with Google ADK.
 """
 
-import os
 import asyncio
+import os
+
 from adk import Agent
 
 # Import and enable Chaukas instrumentation
 from chaukas import sdk as chaukas
 
 # Set environment variables
-os.environ["CHAUKAS_ENDPOINT"] = "https://api.chaukas.com"
+os.environ["CHAUKAS_ENDPOINT"] = "https://api.chaukas.ai"
 os.environ["CHAUKAS_API_KEY"] = "your-api-key-here"
 os.environ["GOOGLE_API_KEY"] = "your-google-api-key"
 
@@ -26,12 +27,12 @@ async def main():
         instruction="You are a helpful math tutor that explains concepts clearly.",
         description="A specialized agent for teaching mathematics",
     )
-    
+
     # Run agent - all interactions will be traced
     result = await agent.run("Explain the quadratic formula")
-    
+
     print(f"Agent response: {result}")
-    
+
     # Flush any remaining events before exit
     client = chaukas.get_client()
     if client:
