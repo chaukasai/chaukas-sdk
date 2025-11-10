@@ -844,31 +844,40 @@ cat events.jsonl | jq .type | sort | uniq -c
 
 ## 🤝 Contributing
 
-We love contributions! Whether it's:
+We welcome contributions from the community! Whether you're:
 
-- 🐛 Bug reports
-- 💡 Feature requests
-- 📖 Documentation improvements
-- 🔧 Code contributions
+- 🐛 Reporting bugs
+- 💡 Requesting features
+- 📖 Improving documentation
+- 🔧 Contributing code
+- ❓ Asking questions
 
-### How to Contribute
+Please read our [Contributing Guide](CONTRIBUTING.md) for detailed guidelines on:
+- Setting up your development environment
+- Coding standards and best practices
+- Testing requirements
+- Pull request process
 
-1. **Fork the repository**
-2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
-3. **Make your changes**: Follow our coding standards
-4. **Add tests**: Ensure 90%+ coverage
-5. **Run the test suite**: `pytest`
-6. **Commit your changes**: `git commit -m 'feat: add amazing feature'`
-7. **Push to the branch**: `git push origin feature/amazing-feature`
-8. **Open a Pull Request**: Describe your changes
+### Quick Start for Contributors
 
-### Development Guidelines
+1. **Fork and clone** the repository
+2. **Install dependencies**: `pip install -e ".[dev]"`
+3. **Make your changes** following our [coding standards](CONTRIBUTING.md#code-style)
+4. **Run tests**: `make test && make lint`
+5. **Submit a PR** using our [PR template](.github/PULL_REQUEST_TEMPLATE.md)
 
-- Follow [Conventional Commits](https://www.conventionalcommits.org/)
-- Write tests for all new features
-- Update documentation for API changes
-- Maintain 90%+ test coverage
-- Use type hints for all functions
+### Report Issues
+
+Found a bug or have a feature request? Please use our issue templates:
+- [Bug Report](.github/ISSUE_TEMPLATE/bug_report.yml)
+- [Feature Request](.github/ISSUE_TEMPLATE/feature_request.yml)
+- [Question](.github/ISSUE_TEMPLATE/question.yml)
+
+### Community Guidelines
+
+Please follow our [Code of Conduct](CODE_OF_CONDUCT.md) to keep our community welcoming and inclusive.
+
+For security vulnerabilities, please see our [Security Policy](SECURITY.md).
 
 ## 🌟 Community
 
@@ -878,7 +887,7 @@ We love contributions! Whether it's:
 ## 📬 Support
 
 - **[GitHub Issues](https://github.com/chaukasai/chaukas-sdk/issues)** - Bug reports and feature requests
-- **[Email](mailto:support@chaukas.ai)** - Direct support
+- **[Email](mailto:2153483+ranesidd@users.noreply.github.com)** - Direct support
 - **[Examples](./examples)** - Working code examples and guides
 
 ## 📄 License
