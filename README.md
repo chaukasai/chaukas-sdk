@@ -7,7 +7,7 @@
 *Open-source SDK implementing [chaukas-spec](https://github.com/chaukasai/chaukas-spec) for standardized agent instrumentation*
 
 [![PyPI version](https://badge.fury.io/py/chaukas-sdk.svg)](https://badge.fury.io/py/chaukas-sdk)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)]()
 [![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen.svg)]()
