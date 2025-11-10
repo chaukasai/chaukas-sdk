@@ -10,9 +10,13 @@ from agents.mcp import MCPServer, MCPServerStreamableHttp
 from agents.model_settings import ModelSettings
 
 from chaukas import sdk as chaukas
+
 chaukas.enable_chaukas()
 
-async def get_instructions_from_prompt(mcp_server: MCPServer, prompt_name: str, **kwargs) -> str:
+
+async def get_instructions_from_prompt(
+    mcp_server: MCPServer, prompt_name: str, **kwargs
+) -> str:
     """Get agent instructions by calling MCP prompt endpoint (user-controlled)"""
     print(f"Getting instructions from prompt: {prompt_name}")
 
@@ -81,7 +85,9 @@ async def main():
     ) as server:
         trace_id = gen_trace_id()
         with trace(workflow_name="Simple Prompt Demo", trace_id=trace_id):
-            print(f"Trace: https://platform.openai.com/traces/trace?trace_id={trace_id}\n")
+            print(
+                f"Trace: https://platform.openai.com/traces/trace?trace_id={trace_id}\n"
+            )
 
             await show_available_prompts(server)
             await demo_code_review(server)
@@ -100,6 +106,7 @@ if __name__ == "__main__":
         else:
             print("(uv not found, using python directly)")
             import sys
+
             process = subprocess.Popen([sys.executable, server_file])
         time.sleep(3)
         print("Server started\n")

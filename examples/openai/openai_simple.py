@@ -1,6 +1,14 @@
 import asyncio
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from the same directory as this script
+script_dir = Path(__file__).parent
+load_dotenv(script_dir / ".env")
 
 from agents import Agent, Runner
+
 from chaukas import sdk as chaukas
 
 chaukas.enable_chaukas()

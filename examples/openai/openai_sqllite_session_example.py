@@ -6,13 +6,19 @@ across multiple agent runs without manually handling .to_input_list().
 """
 
 import asyncio
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from the same directory as this script
+script_dir = Path(__file__).parent
+load_dotenv(script_dir / ".env")
 
 from agents import Agent, Runner, SQLiteSession
 
 from chaukas import sdk as chaukas
 
 chaukas.enable_chaukas()
-
 
 
 async def main():

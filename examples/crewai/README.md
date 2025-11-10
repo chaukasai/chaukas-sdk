@@ -1,181 +1,156 @@
 # CrewAI Examples
 
-Comprehensive examples demonstrating the Chaukas SDK integration with CrewAI framework.
+Examples demonstrating the Chaukas SDK integration with CrewAI framework for comprehensive agent observability.
 
-## Event Coverage: 20/20 (100%)
+## Quick Start
 
-CrewAI provides **complete event coverage** through its event bus architecture!
+1. **Install dependencies:**
+```bash
+pip install "crewai>=1.4.1,<2.0.0" chaukas-sdk
+```
 
-**All Events Captured:**
-- ✅ SESSION_START/END - Session lifecycle
-- ✅ AGENT_START/END - Agent execution
-- ✅ MODEL_INVOCATION_START/END - LLM calls
-- ✅ TOOL_CALL_START/END - Tool execution
-- ✅ INPUT_RECEIVED - User inputs
-- ✅ OUTPUT_EMITTED - Agent outputs
-- ✅ ERROR - Error tracking
-- ✅ RETRY - Retry attempts
-- ✅ AGENT_HANDOFF - Multi-agent handoffs
-- ✅ MCP_CALL_START/END - MCP tool detection
-- ✅ POLICY_DECISION - Crew decision tracking
-- ✅ DATA_ACCESS - Memory access tracking
-- ✅ STATE_UPDATE - Task state changes
-
-## Examples
-
-### 1. crewai_example.py
-
-**Basic multi-agent example** - Simple demonstration of CrewAI with full event capture.
-
-**Features:**
-- Multiple agents with different roles
-- Task delegation and collaboration
-- 100% event coverage
-- Event bus integration
-
-**Usage:**
+2. **Set up environment variables:**
 ```bash
 export OPENAI_API_KEY="sk-..."
 export CREWAI_DISABLE_TELEMETRY=true
+```
+
+3. **Run an example:**
+```bash
 python crewai_example.py
 ```
 
-### 2. crewai_comprehensive_example.py
+Events will be captured in `events.jsonl` by default.
 
-**Full-featured example** - Complete demonstration with multiple crews and complex workflows.
+## Examples
 
-**Features:**
-- Multiple crew configurations
-- Complex task hierarchies
-- Agent collaboration patterns
-- Memory and context management
-- Comprehensive event analysis
+### Core Examples (All Event Types)
 
-**Usage:**
-```bash
-export OPENAI_API_KEY="sk-..."
-export CREWAI_DISABLE_TELEMETRY=true
-python crewai_comprehensive_example.py
-```
+- **[crewai_example.py](crewai_example.py)** - Basic multi-agent collaboration with event capture
+- **[crewai_comprehensive_example.py](crewai_comprehensive_example.py)** - Full-featured example with multiple crews and complex workflows
+- **[crewai_retry_example.py](crewai_retry_example.py)** - Error handling and retry logic demonstration
+- **[crewai_tools_example.py](crewai_tools_example.py)** - Custom tool implementations and MCP detection
 
-### 3. crewai_retry_example.py
+### Feature-Specific Examples
 
-**Retry logic demonstration** - Shows retry detection and error recovery in CrewAI.
+These examples require specific CrewAI features to capture additional event types:
 
-**Features:**
-- Automatic retry detection via event bus
-- Backoff strategies
-- Error recovery patterns
-- RETRY event capture
+- **[crewai_knowledge_example.py](crewai_knowledge_example.py)** ⚠️ - DATA_ACCESS events via Knowledge feature (requires `pip install chromadb`)
+- **[crewai_guardrails_example.py](crewai_guardrails_example.py)** ⚠️ - POLICY_DECISION events via Task Guardrails
+- **[crewai_flows_example.py](crewai_flows_example.py)** ⚠️ - SYSTEM events via CrewAI Flows orchestration
 
-**Usage:**
-```bash
-export OPENAI_API_KEY="sk-..."
-export CREWAI_DISABLE_TELEMETRY=true
-python crewai_retry_example.py
-```
-
-### 4. crewai_tools_example.py
-
-**Tool usage patterns** - Demonstrates tool implementations and MCP detection.
-
-**Features:**
-- Custom tool implementations
-- Tool execution tracking
-- MCP tool detection
-- Performance metrics
-- Tool error handling
-
-**Usage:**
-```bash
-export OPENAI_API_KEY="sk-..."
-export CREWAI_DISABLE_TELEMETRY=true
-python crewai_tools_example.py
-```
-
-## Requirements
-
-```bash
-# Install CrewAI
-pip install crewai
-
-# Install Chaukas SDK
-pip install chaukas-sdk
-
-# Or install with CrewAI integration
-pip install "chaukas-sdk[crewai]"
-
-# Set your OpenAI API key (CrewAI uses OpenAI by default)
-export OPENAI_API_KEY="sk-..."
-
-# Disable CrewAI telemetry (prevents "Service Unavailable" errors)
-export CREWAI_DISABLE_TELEMETRY=true
-```
+⚠️ = Requires specific CrewAI features to be configured
 
 ## Configuration
 
-### Required Environment Variables
+### Environment Variables
+
+Create a `.env` file in the example directory:
 
 ```bash
-export OPENAI_API_KEY="sk-..."  # CrewAI uses OpenAI for LLM
-export CREWAI_DISABLE_TELEMETRY=true  # Prevents telemetry errors
+# Required
+OPENAI_API_KEY=sk-...
+CREWAI_DISABLE_TELEMETRY=true
+
+# Optional Chaukas Configuration
+CHAUKAS_OUTPUT_MODE=file           # or "api"
+CHAUKAS_OUTPUT_FILE=events.jsonl   # default output file
+
+# For API mode (optional)
+# CHAUKAS_OUTPUT_MODE=api
+# CHAUKAS_ENDPOINT=https://api.chaukas.ai
+# CHAUKAS_API_KEY=your-chaukas-api-key
+# CHAUKAS_TENANT_ID=your-tenant-id
+# CHAUKAS_PROJECT_ID=your-project-id
+
+# Batching (optional)
+CHAUKAS_BATCH_SIZE=1              # Immediate write for demos
+CHAUKAS_FLUSH_INTERVAL=5.0        # Flush interval in seconds
 ```
 
-### Optional Chaukas Configuration
+### Required Variables
 
-```bash
-# Output mode (default: file)
-export CHAUKAS_OUTPUT_MODE="file"  # or "api"
-export CHAUKAS_OUTPUT_FILE="events.jsonl"
+- `OPENAI_API_KEY` - Your OpenAI API key (CrewAI uses OpenAI by default)
+- `CREWAI_DISABLE_TELEMETRY` - Set to `true` to prevent telemetry errors
 
-# For API mode
-export CHAUKAS_OUTPUT_MODE="api"
-export CHAUKAS_ENDPOINT="https://api.chaukas.com"
-export CHAUKAS_API_KEY="your-chaukas-api-key"
-export CHAUKAS_TENANT_ID="your-tenant"
-export CHAUKAS_PROJECT_ID="your-project"
+## Viewing Events
 
-# Batching configuration
-export CHAUKAS_BATCH_SIZE="1"  # Immediate write for demos
-export CHAUKAS_FLUSH_INTERVAL="5.0"
-```
-
-## Analyzing Events
-
-CrewAI examples capture the most comprehensive event data:
+After running an example, analyze captured events:
 
 ```bash
 # View all events
 cat events.jsonl | jq '.'
 
-# Count all 20 event types
+# Count event types
 cat events.jsonl | jq -r '.type' | sort | uniq -c
 
-# View agent handoffs
+# View specific event types
 cat events.jsonl | jq 'select(.type == "AGENT_HANDOFF")'
+cat events.jsonl | jq 'select(.type == "DATA_ACCESS")'
+cat events.jsonl | jq 'select(.type == "POLICY_DECISION")'
+cat events.jsonl | jq 'select(.type == "TOOL_CALL_START")'
 
 # Track task lifecycle
 cat events.jsonl | jq 'select(.type | contains("TASK"))'
 
-# View memory access
-cat events.jsonl | jq 'select(.type == "DATA_ACCESS")'
-
-# Check policy decisions
-cat events.jsonl | jq 'select(.type == "POLICY_DECISION")'
+# View LLM invocations
+cat events.jsonl | jq 'select(.type | contains("MODEL_INVOCATION"))'
 ```
 
-## Architecture
+## Event Coverage
 
-CrewAI integration leverages the **event bus architecture**:
+CrewAI provides the most comprehensive event capture through its event bus architecture:
 
-1. **Event Bus Listeners** - Hooks into CrewAI's internal event system
-2. **Full Observability** - Captures all crew, agent, task, and tool events
-3. **Zero Boilerplate** - Automatic patching with no code changes needed
-4. **Distributed Tracing** - Tracks events across agent handoffs
+### Core Events (Captured in All Examples)
+- `SESSION_START` / `SESSION_END` - Crew lifecycle
+- `AGENT_START` / `AGENT_END` - Agent execution
+- `MODEL_INVOCATION_START` / `MODEL_INVOCATION_END` - LLM calls
+- `TOOL_CALL_START` / `TOOL_CALL_END` - Tool execution
+- `INPUT_RECEIVED` - User inputs
+- `OUTPUT_EMITTED` - Agent outputs
+
+### Feature-Specific Events
+- `ERROR` / `RETRY` - Tool failures → **crewai_retry_example.py**
+- `AGENT_HANDOFF` - Multi-agent workflows → **crewai_comprehensive_example.py**
+- `MCP_CALL_START` / `MCP_CALL_END` - MCP tools → **crewai_comprehensive_example.py**
+- `POLICY_DECISION` - Task Guardrails → **crewai_guardrails_example.py** ⚠️
+- `DATA_ACCESS` - Knowledge Sources → **crewai_knowledge_example.py** ⚠️
+- `STATE_UPDATE` - Agent Reasoning (automatic when enabled)
+- `SYSTEM` - CrewAI Flows → **crewai_flows_example.py** ⚠️
+
+**Coverage:** 13/20 core events + 7/20 feature-specific events (with features enabled)
+
+### Comparison with OpenAI Agents
+
+| Feature | OpenAI Agents | CrewAI |
+|---------|---------------|--------|
+| Core Events | 13/20 | 13/20 |
+| Feature-Specific Events | 3/7 | 7/7 (with features) |
+| Architecture | Method patching | Event bus |
+| Multi-Agent Support | Limited | Native |
+| Knowledge/RAG | Built-in | Via Knowledge feature |
+| Guardrails | N/A | Via Task guardrails |
+| Flows/Orchestration | N/A | Via Flows feature |
+
+## Requirements
+
+```bash
+# Core requirements
+pip install "crewai>=1.4.1,<2.0.0" chaukas-sdk
+
+# Or with CrewAI integration extras
+pip install "chaukas-sdk[crewai]"
+
+# For Knowledge examples (DATA_ACCESS events)
+pip install chromadb
+
+# For alternative vector stores
+pip install qdrant-client  # if using Qdrant
+```
 
 ## Troubleshooting
 
-### CrewAI Telemetry Errors
+### Service Unavailable Error
 
 ```
 Service Unavailable encountered while exporting span batch
@@ -186,18 +161,18 @@ Service Unavailable encountered while exporting span batch
 export CREWAI_DISABLE_TELEMETRY=true
 ```
 
-### API Key Issues
+### Missing API Key
 
 ```
 Error: OPENAI_API_KEY not set
 ```
 
-**Solution:** CrewAI uses OpenAI by default:
+**Solution:** Set your OpenAI API key:
 ```bash
 export OPENAI_API_KEY="sk-..."
 ```
 
-### Import Errors
+### Import Error
 
 ```
 ModuleNotFoundError: No module named 'crewai'
@@ -205,39 +180,31 @@ ModuleNotFoundError: No module named 'crewai'
 
 **Solution:** Install CrewAI:
 ```bash
-pip install crewai
+pip install "crewai>=1.4.1,<2.0.0"
 ```
 
-## Best Practices
+### ChromaDB Required Error
 
-1. **Always disable telemetry** - Set `CREWAI_DISABLE_TELEMETRY=true`
-2. **Start with crewai_example.py** - Understand basic patterns first
-3. **Use file mode for testing** - Set `CHAUKAS_OUTPUT_MODE="file"`
-4. **Analyze event sequences** - Review agent handoffs and task flows
-5. **Monitor memory access** - Track DATA_ACCESS events for debugging
+```
+ModuleNotFoundError: No module named 'chromadb'
+```
 
-## Key Differences from OpenAI
+**Solution:** Install ChromaDB for Knowledge examples:
+```bash
+pip install chromadb
+```
 
-| Feature | OpenAI Agents | CrewAI |
-|---------|---------------|--------|
-| Event Coverage | 80% (16/20) | 100% (20/20) |
-| Architecture | Method patching | Event bus |
-| MCP Support | ❌ | ✅ |
-| Memory Tracking | ❌ | ✅ |
-| Policy Decisions | ❌ | ✅ |
-| Multi-Agent | Limited | Native |
+### No Events Captured
+
+**Check:**
+1. Ensure `chaukas.enable_chaukas()` is called before creating agents
+2. Verify `CHAUKAS_OUTPUT_FILE` path is writable
+3. Call `client.flush()` at the end of your script
+4. Check for errors in console output
 
 ## Further Reading
 
 - [CrewAI Documentation](https://docs.crewai.com)
-- [Chaukas SDK Documentation](https://docs.chaukas.com)
-- [CrewAI Event Bus](https://docs.crewai.com/concepts/events)
-
-## Contributing
-
-To add new CrewAI examples:
-1. Place files in this directory
-2. Follow the naming pattern: `crewai_*.py`
-3. Include comprehensive comments and docstrings
-4. Leverage the event bus for full observability
-5. Update this README with the new example
+- [chaukas-spec](https://github.com/chaukasai/chaukas-spec) - Standardized event schema
+- [CrewAI Event Bus Concepts](https://docs.crewai.com/concepts/events)
+- [OpenAI Examples](../openai) - Compare with OpenAI Agents integration patterns

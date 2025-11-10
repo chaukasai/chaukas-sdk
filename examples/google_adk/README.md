@@ -73,7 +73,7 @@ export CHAUKAS_OUTPUT_FILE="events.jsonl"
 
 # For API mode
 export CHAUKAS_OUTPUT_MODE="api"
-export CHAUKAS_ENDPOINT="https://api.chaukas.com"
+export CHAUKAS_ENDPOINT="https://api.chaukas.ai"
 export CHAUKAS_API_KEY="your-chaukas-api-key"
 export CHAUKAS_TENANT_ID="your-tenant"
 export CHAUKAS_PROJECT_ID="your-project"
@@ -177,8 +177,9 @@ To contribute:
 ## Further Reading
 
 - [Google ADK Documentation](https://cloud.google.com/generative-ai-app-builder/docs/agent-development-kit)
-- [Chaukas SDK Documentation](https://docs.chaukas.com)
-- [Integration Development Guide](../../docs/INTEGRATION_GUIDE.md)
+- [chaukas-spec](https://github.com/chaukasai/chaukas-spec) - Standardized event schema
+- [OpenAI Examples](../openai) - See OpenAI integration for reference patterns
+- [CrewAI Examples](../crewai) - See CrewAI integration for reference patterns
 
 ## Support
 

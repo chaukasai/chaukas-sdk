@@ -2,17 +2,17 @@
 
 # 🔍 Chaukas SDK
 
-**One line of code. Complete AI agent observability.**
+**One line to instrument your agent and capture every event in an immutable, queryable audit trail.**
 
-*Production-grade instrumentation for OpenAI, CrewAI, and Google ADK*
+*Open-source SDK implementing [chaukas-spec](https://github.com/chaukasai/chaukas-spec) for standardized agent instrumentation*
 
 [![PyPI version](https://badge.fury.io/py/chaukas-sdk.svg)](https://badge.fury.io/py/chaukas-sdk)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)]()
 [![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen.svg)]()
 
-[Quick Start](#-quick-start) • [Documentation](#-documentation) • [Examples](#-examples) • [Architecture](#-architecture) • [Community](#-community)
+[Quick Start](#-quick-start) • [Documentation](#-documentation) • [Examples](#-examples) • [chaukas-spec](#-supported-frameworks) • [Community](#-community)
 
 </div>
 
@@ -22,7 +22,7 @@
 
 Building AI agents is hard. **Understanding what they're doing is harder.**
 
-Chaukas SDK gives you X-ray vision into your AI agents with **zero configuration**:
+Chaukas SDK is an **open-source SDK** that implements the **[chaukas-spec](https://github.com/chaukasai/chaukas-spec)** — a standardized event schema for AI agent instrumentation. It gives you X-ray vision into your AI agents with **zero configuration**:
 
 ```python
 import chaukas
@@ -50,7 +50,8 @@ result = await agent.run(messages=[...])
 | **Setup Time** | 1 line | Hours | Days |
 | **Code Changes** | Zero | Extensive | Everywhere |
 | **Agent-Native** | ✅ 100% | ❌ Adapted | ❌ Custom |
-| **Event Coverage** | 🎉 19/19 (100%) | ⚠️ Partial | 🤷 Up to you |
+| **Event Coverage** | 🎉 [19/19 chaukas-spec](https://github.com/chaukasai/chaukas-spec) | ⚠️ Partial | 🤷 Up to you |
+| **Standardized Schema** | ✅ [chaukas-spec](https://github.com/chaukasai/chaukas-spec) | ❌ Proprietary | ❌ None |
 | **Multi-Agent Tracking** | ✅ Built-in | ❌ Manual | ❌ Complex |
 | **MCP Protocol** | ✅ Native | ❌ No support | ❌ Manual |
 | **Distributed Tracing** | ✅ Automatic | ⚠️ Requires setup | ❌ Hard |
@@ -154,19 +155,23 @@ agent = Agent(name="assistant")
 response = agent.run("Hello!")
 ```
 
-## 📊 Supported SDKs
+## 📊 Supported Frameworks
 
-| SDK | Coverage | Status | Features |
-|-----|----------|--------|----------|
-| **[OpenAI Agents](https://github.com/openai/openai-agents-python)** | 🎉 **100%** (19/19) | 🟢 Stable | Session mgmt, MCP protocol, policy tracking, state updates, retries |
-| **[CrewAI](https://github.com/crewAIInc/crewAI)** | 🎉 **100%** (19/19) | 🟢 Stable | Event bus integration, multi-agent handoffs, flow tracking |
-| **[Google ADK](https://github.com/google/adk-python)** | 🟡 **26%** (5/19) | 🔄 Beta | Basic agent & LLM tracking |
+Chaukas SDK implements the **[chaukas-spec](https://github.com/chaukasai/chaukas-spec)** — a standardized event schema with **19 event types** for AI agent observability.
 
-*Coverage = percentage of [chaukas-spec](https://github.com/chaukas/chaukas-spec) event types captured*
+| Framework | Version | Events | Status | Notes |
+|-----------|---------|--------|--------|-------|
+| **[OpenAI Agents](https://github.com/openai/openai-agents-python)** | `>=0.5.0,<1.0.0` | 🎉 **19/19** | 🟢 Production | Session mgmt, MCP protocol, policy tracking, state updates, retries |
+| **[CrewAI](https://github.com/crewAIInc/crewAI)** | `>=1.4.1,<2.0.0` | 🎉 **19/19** | 🟢 Production | Event bus integration, multi-agent handoffs, knowledge sources, guardrails, flows |
+| **[Google ADK](https://github.com/google/adk-python)** | Latest | 🚧 **5/19** | 🟡 Under Construction | Basic agent & LLM tracking |
 
-## 🎨 Event Types Captured
+**Coming Soon**: LangChain, LangGraph, AutoGen, Microsoft Semantic Kernel
 
-Chaukas captures **all 19 chaukas-spec event types** automatically:
+*All frameworks implementing the complete [chaukas-spec](https://github.com/chaukasai/chaukas-spec) capture all 19 event types*
+
+## 🎨 Event Types (chaukas-spec)
+
+The **[chaukas-spec](https://github.com/chaukasai/chaukas-spec)** defines **19 standardized event types** for AI agent observability. Chaukas SDK captures all of them automatically:
 
 ### 🎭 Agent Lifecycle
 ```python
@@ -382,7 +387,7 @@ chaukas.enable_chaukas(
             "openai_agents",
             "crewai"
         ],
-        "batch_size": 100,
+        "batch_size": 20,             # Default batch size
         "flush_interval": 10.0,
         "timeout": 60.0,
     }
@@ -776,19 +781,18 @@ chaukas.enable_chaukas(config={
 
 ## 📚 Documentation
 
-- **[Full Documentation](https://docs.chaukas.ai)** - Complete API reference
-- **[OpenAI Events Guide](./docs/OPENAI_EVENTS.md)** - OpenAI Agents event details
-- **[CrewAI Events Guide](./docs/CREWAI_EVENTS.md)** - CrewAI event details
-- **[Architecture Deep Dive](./docs/ARCHITECTURE.md)** - Technical architecture
-- **[Event Schema](https://github.com/chaukas/chaukas-spec)** - chaukas-spec definition
-- **[Examples Repository](./examples)** - Complete working examples
+- **[chaukas-spec](https://github.com/chaukasai/chaukas-spec)** - Standardized event schema (19 event types)
+- **[Examples Repository](./examples)** - Complete working examples for OpenAI, CrewAI, and Google ADK
+- **[OpenAI Examples](./examples/openai)** - OpenAI Agents integration examples and guides
+- **[CrewAI Examples](./examples/crewai)** - CrewAI integration examples and guides
+- **[Google ADK Examples](./examples/adk)** - Google ADK integration examples
 
 ## 🧪 Development
 
 ### Setup
 
 ```bash
-git clone https://github.com/chaukas/chaukas-sdk
+git clone https://github.com/chaukasai/chaukas-sdk
 cd chaukas-sdk
 pip install -e ".[dev]"
 ```
@@ -868,19 +872,18 @@ We love contributions! Whether it's:
 
 ## 🌟 Community
 
-- **[Discord](https://discord.gg/chaukasai)** - Chat with the community
-- **[GitHub Discussions](https://github.com/chaukas/chaukas-sdk/discussions)** - Ask questions, share ideas
+- **[GitHub Discussions](https://github.com/chaukasai/chaukas-sdk/discussions)** - Ask questions, share ideas
+- **[GitHub Issues](https://github.com/chaukasai/chaukas-sdk/issues)** - Bug reports and feature requests
 
 ## 📬 Support
 
-- **[GitHub Issues](https://github.com/chaukas/chaukas-sdk/issues)** - Bug reports and feature requests
+- **[GitHub Issues](https://github.com/chaukasai/chaukas-sdk/issues)** - Bug reports and feature requests
 - **[Email](mailto:support@chaukas.ai)** - Direct support
-- **[Documentation](https://docs.chaukas.ai)** - Comprehensive guides
-- **[Stack Overflow](https://stackoverflow.com/questions/tagged/chaukasai)** - Community Q&A (tag: `chaukas`)
+- **[Examples](./examples)** - Working code examples and guides
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) file for details
+Apache 2.0 License - see [LICENSE](LICENSE) file for details
 
 ---
 
@@ -888,6 +891,6 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 **Built with ❤️ by the Chaukas team**
 
-[Website](https://chaukas.ai) • [Documentation](https://docs.chaukas.ai) • [GitHub](https://github.com/chaukasai)
+[Website](https://chaukas.ai) • [chaukas-spec](https://github.com/chaukasai/chaukas-spec) • [GitHub](https://github.com/chaukasai/chaukas-sdk)
 
 </div>

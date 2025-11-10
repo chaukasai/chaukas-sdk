@@ -1,5 +1,12 @@
 import asyncio
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env from the same directory as this script
+script_dir = Path(__file__).parent
+load_dotenv(script_dir / ".env")
 
 from agents import Agent, CodeInterpreterTool, Runner, trace
 
@@ -31,7 +38,9 @@ async def main():
 
     with trace("Code interpreter example"):
         print("Solving math problem...")
-        result = Runner.run_streamed(agent, "What is the square root of273 * 312821 plus 1782?")
+        result = Runner.run_streamed(
+            agent, "What is the square root of273 * 312821 plus 1782?"
+        )
         async for event in result.stream_events():
             if (
                 event.type == "run_item_stream_event"
