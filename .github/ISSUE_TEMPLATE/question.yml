@@ -1,0 +1,119 @@
+name: Question
+description: Ask a question about using the Chaukas SDK
+title: "[QUESTION] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question about using the Chaukas SDK? We're here to help!
+
+        Before asking, please check:
+        - [README](https://github.com/chaukasai/chaukas-sdk/blob/main/README.md)
+        - [Examples](https://github.com/chaukasai/chaukas-sdk/tree/main/examples)
+        - [Existing issues](https://github.com/chaukasai/chaukas-sdk/issues)
+
+  - type: dropdown
+    id: question-type
+    attributes:
+      label: Question Type
+      description: What is your question about?
+      options:
+        - Getting started / Installation
+        - SDK integration with CrewAI
+        - SDK integration with OpenAI Agents
+        - SDK integration with Google ADK
+        - Configuration and setup
+        - Event capturing and tracing
+        - API usage and best practices
+        - Examples and tutorials
+        - Performance and optimization
+        - Deployment and production usage
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: Ask your question clearly and concisely
+      placeholder: How do I...?
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to accomplish?
+      description: Provide context about what you're trying to achieve
+      placeholder: |
+        I'm trying to...
+        My goal is to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: What approaches have you already attempted?
+      placeholder: |
+        I tried...
+        I looked at...
+        I followed the example...
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Relevant Code
+      description: Share relevant code snippets (optional)
+      render: python
+      placeholder: |
+        from chaukas.sdk import enable_chaukas
+
+        # Your code here...
+
+  - type: dropdown
+    id: framework
+    attributes:
+      label: Framework
+      description: Which framework are you using?
+      options:
+        - CrewAI
+        - OpenAI Agents
+        - Google ADK
+        - Multiple frameworks
+        - Not using a framework
+        - Other
+
+  - type: input
+    id: sdk-version
+    attributes:
+      label: Chaukas SDK Version
+      placeholder: "0.1.0"
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      placeholder: "3.11.0"
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case Description
+      description: Briefly describe your use case (helps us provide better answers)
+      placeholder: |
+        I'm building a multi-agent system that...
+        The agents need to...
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other information that might be helpful
+      placeholder: |
+        - Environment: development/production
+        - Deployment: local/cloud
+        - Other relevant details...

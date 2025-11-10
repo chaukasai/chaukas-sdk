@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = {file = "LICENSE"}
 authors = [
-    {name = "Chaukas", email = "sid@chaukas.ai"},
+    {name = "Chaukas", email = "2153483+ranesidd@users.noreply.github.com"},
 ]
 keywords = [
     "ai", "agents", "observability", "instrumentation", "tracing",

@@ -1,0 +1,149 @@
+name: Bug Report
+description: Report a bug in the Chaukas SDK
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the form below to help us understand and fix the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the Bug
+      description: A clear and concise description of what the bug is.
+      placeholder: The SDK crashes when...
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: component
+    attributes:
+      label: Affected Component
+      description: Which part of the SDK is affected?
+      options:
+        - label: Core SDK (client, tracer, event builder)
+        - label: CrewAI integration
+        - label: OpenAI Agents integration
+        - label: Google ADK integration
+        - label: Configuration management
+        - label: Examples
+        - label: Documentation
+        - label: Other (please specify in description)
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Provide detailed steps to reproduce the bug
+      placeholder: |
+        1. Install the SDK with `pip install chaukas-sdk`
+        2. Run the following code...
+        3. Observe the error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: code-example
+    attributes:
+      label: Minimal Code Example
+      description: Provide a minimal code snippet that reproduces the issue
+      render: python
+      placeholder: |
+        from chaukas.sdk import enable_chaukas
+
+        enable_chaukas(
+            api_key="your-api-key",
+            endpoint="https://api.chaukas.ai"
+        )
+
+        # Code that triggers the bug...
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: The SDK should...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: Instead, the SDK...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: integration
+    attributes:
+      label: Framework/Integration
+      description: Which framework are you using with the SDK?
+      options:
+        - CrewAI
+        - OpenAI Agents
+        - Google ADK
+        - Other
+        - Not using a framework
+    validations:
+      required: true
+
+  - type: input
+    id: sdk-version
+    attributes:
+      label: Chaukas SDK Version
+      description: What version of the SDK are you using?
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      description: What version of Python are you using?
+      placeholder: "3.11.0"
+    validations:
+      required: true
+
+  - type: input
+    id: framework-version
+    attributes:
+      label: Framework Version (if applicable)
+      description: Version of CrewAI, OpenAI, etc.
+      placeholder: "crewai==0.28.0"
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      description: What OS are you using?
+      placeholder: "macOS 14.0, Ubuntu 22.04, Windows 11"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs and Stack Trace
+      description: Please provide the complete error message and stack trace
+      render: shell
+      placeholder: |
+        Traceback (most recent call last):
+          File "example.py", line 10, in <module>
+            ...
+        Error: ...
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here
+      placeholder: |
+        - This only happens when...
+        - The issue started after...
+        - Related issues: #123
