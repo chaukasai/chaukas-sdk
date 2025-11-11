@@ -175,13 +175,28 @@ class LangChainWrapper:
         try:
             try:
                 from langchain_core.runnables import Runnable
+                from langchain_core.runnables.base import RunnableSequence
             except ImportError:
-                from langchain.schema.runnable import Runnable
+                try:
+                    from langchain.schema.runnable import Runnable, RunnableSequence
+                except ImportError:
+                    from langchain.schema.runnable import Runnable
 
-            if hasattr(self, "_original_invoke"):
-                Runnable.invoke = self._original_invoke
-            if hasattr(self, "_original_ainvoke") and self._original_ainvoke:
-                Runnable.ainvoke = self._original_ainvoke
+                    RunnableSequence = None
+
+            if hasattr(self, "_original_runnable_invoke"):
+                Runnable.invoke = self._original_runnable_invoke
+            if (
+                hasattr(self, "_original_runnable_ainvoke")
+                and self._original_runnable_ainvoke
+            ):
+                Runnable.ainvoke = self._original_runnable_ainvoke
+
+            if RunnableSequence:
+                if hasattr(self, "_original_seq_invoke"):
+                    RunnableSequence.invoke = self._original_seq_invoke
+                if hasattr(self, "_original_seq_ainvoke") and self._original_seq_ainvoke:
+                    RunnableSequence.ainvoke = self._original_seq_ainvoke
 
             logger.info("LangChain auto-instrumentation removed")
         except Exception as e:
