@@ -193,9 +193,11 @@ class LangChainWrapper:
             except RuntimeError:
                 # If asyncio.run fails, try with new event loop
                 loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)  # Set as current loop
                 try:
                     loop.run_until_complete(self.tracer.client.send_event(event))
                 finally:
+                    asyncio.set_event_loop(None)  # Clean up
                     loop.close()
 
     async def _send_event_async(self, event):
