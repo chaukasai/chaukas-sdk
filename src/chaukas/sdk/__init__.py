@@ -225,7 +225,7 @@ def disable_chaukas() -> None:
     # Remove LangChain auto-instrumentation if present
     if _patcher:
         for wrapper in _patcher._wrappers:
-            if hasattr(wrapper, 'remove_auto_instrument'):
+            if hasattr(wrapper, "remove_auto_instrument"):
                 try:
                     wrapper.remove_auto_instrument()
                 except Exception as e:
@@ -286,21 +286,26 @@ def get_langchain_callback():
     global _patcher
 
     if not _enabled:
-        raise RuntimeError("Chaukas is not enabled. Call chaukas.enable_chaukas() first.")
+        raise RuntimeError(
+            "Chaukas is not enabled. Call chaukas.enable_chaukas() first."
+        )
 
     if _patcher is None:
         raise RuntimeError("MonkeyPatcher not initialized.")
 
     # Find the LangChain wrapper in the patcher's wrappers
     for wrapper in _patcher._wrappers:
-        if hasattr(wrapper, 'get_callback_handler'):
+        if hasattr(wrapper, "get_callback_handler"):
             return wrapper.get_callback_handler()
 
     # If not found, try to create it
     try:
         from chaukas.sdk.integrations.langchain import LangChainWrapper
+
         wrapper = LangChainWrapper(_tracer)
         _patcher._wrappers.append(wrapper)
         return wrapper.get_callback_handler()
     except ImportError:
-        raise RuntimeError("LangChain integration not available. Is LangChain installed?")
+        raise RuntimeError(
+            "LangChain integration not available. Is LangChain installed?"
+        )

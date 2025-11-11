@@ -7,7 +7,7 @@ This is a namespace package that contains both:
 """
 
 # Declare this as a namespace package
-__path__ = __import__('pkgutil').extend_path(__path__, __name__)
+__path__ = __import__("pkgutil").extend_path(__path__, __name__)
 
 # Re-export SDK functions for convenience (import chaukas.enable_chaukas())
 try:
@@ -19,13 +19,14 @@ try:
         get_client,
         get_langchain_callback,
     )
+
     __all__ = [
-        'enable_chaukas',
-        'disable_chaukas',
-        'is_enabled',
-        'get_tracer',
-        'get_client',
-        'get_langchain_callback',
+        "enable_chaukas",
+        "disable_chaukas",
+        "is_enabled",
+        "get_tracer",
+        "get_client",
+        "get_langchain_callback",
     ]
 except ImportError:
     # SDK not installed yet

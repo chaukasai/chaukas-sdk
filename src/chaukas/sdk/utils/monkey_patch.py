@@ -142,16 +142,23 @@ class MonkeyPatcher:
     def _patch_langchain(self) -> None:
         """Apply patches for LangChain."""
         from chaukas.sdk.integrations.langchain import LangChainWrapper
+
         wrapper = LangChainWrapper(self.tracer)
         self._wrappers.append(wrapper)  # Store wrapper for cleanup
 
         # Try to auto-instrument by injecting into global callbacks
         if wrapper.auto_instrument():
-            logger.info("LangChain instrumentation enabled - all operations will be tracked automatically")
+            logger.info(
+                "LangChain instrumentation enabled - all operations will be tracked automatically"
+            )
         else:
             # Fallback: manual callback passing required
-            logger.info("LangChain wrapper initialized. Use chaukas.get_langchain_callback() to manually pass the callback")
-            logger.info("Example: chain.invoke(input, config={'callbacks': [chaukas.get_langchain_callback()]})")
+            logger.info(
+                "LangChain wrapper initialized. Use chaukas.get_langchain_callback() to manually pass the callback"
+            )
+            logger.info(
+                "Example: chain.invoke(input, config={'callbacks': [chaukas.get_langchain_callback()]})"
+            )
 
     def _add_patch(
         self,

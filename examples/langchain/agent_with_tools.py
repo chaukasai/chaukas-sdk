@@ -46,10 +46,15 @@ def main():
     llm_with_tools = llm.bind_tools(tools)
 
     # Create a prompt template
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are a helpful assistant that can do calculations and count words."),
-        ("human", "{input}"),
-    ])
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You are a helpful assistant that can do calculations and count words.",
+            ),
+            ("human", "{input}"),
+        ]
+    )
 
     # Create the chain
     chain = prompt | llm_with_tools
@@ -58,14 +63,16 @@ def main():
     result = chain.invoke({"input": "What is 25 * 4?"})
 
     print("\nResult:", result)
-    print("\nTool calls:", result.tool_calls if hasattr(result, 'tool_calls') else "None")
+    print(
+        "\nTool calls:", result.tool_calls if hasattr(result, "tool_calls") else "None"
+    )
 
     # If there are tool calls, execute them
-    if hasattr(result, 'tool_calls') and result.tool_calls:
+    if hasattr(result, "tool_calls") and result.tool_calls:
         print("\nExecuting tools:")
         for tool_call in result.tool_calls:
-            tool_name = tool_call['name']
-            tool_args = tool_call['args']
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
             print(f"  - {tool_name}({tool_args})")
 
             # Execute the tool
@@ -81,6 +88,7 @@ def main():
 
 if __name__ == "__main__":
     import time
+
     main()
 
     # Give async operations time to complete

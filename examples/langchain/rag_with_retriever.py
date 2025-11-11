@@ -28,10 +28,22 @@ def main():
 
     # Create sample documents
     documents = [
-        Document(page_content="LangChain is a framework for developing applications powered by language models.", metadata={"source": "doc1"}),
-        Document(page_content="Chaukas SDK provides one-line observability for agent building frameworks.", metadata={"source": "doc2"}),
-        Document(page_content="RAG (Retrieval-Augmented Generation) combines retrieval with generation for better responses.", metadata={"source": "doc3"}),
-        Document(page_content="Vector databases store embeddings for semantic search capabilities.", metadata={"source": "doc4"}),
+        Document(
+            page_content="LangChain is a framework for developing applications powered by language models.",
+            metadata={"source": "doc1"},
+        ),
+        Document(
+            page_content="Chaukas SDK provides one-line observability for agent building frameworks.",
+            metadata={"source": "doc2"},
+        ),
+        Document(
+            page_content="RAG (Retrieval-Augmented Generation) combines retrieval with generation for better responses.",
+            metadata={"source": "doc3"},
+        ),
+        Document(
+            page_content="Vector databases store embeddings for semantic search capabilities.",
+            metadata={"source": "doc4"},
+        ),
     ]
 
     # Split documents
@@ -75,6 +87,7 @@ Answer:"""
 
 if __name__ == "__main__":
     import time
+
     main()
 
     # Give async operations time to complete

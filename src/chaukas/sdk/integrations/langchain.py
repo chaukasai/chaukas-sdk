@@ -13,6 +13,7 @@ import json
 # Optional performance monitoring
 try:
     import psutil
+
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
@@ -74,6 +75,7 @@ class LangChainWrapper:
                 except ImportError:
                     # If RunnableSequence import fails, just use Runnable
                     from langchain.schema.runnable import Runnable
+
                     RunnableSequence = None
 
             # Get our callback handler
@@ -81,43 +83,57 @@ class LangChainWrapper:
 
             # Store original methods
             self._original_runnable_invoke = Runnable.invoke
-            self._original_runnable_ainvoke = Runnable.ainvoke if hasattr(Runnable, 'ainvoke') else None
+            self._original_runnable_ainvoke = (
+                Runnable.ainvoke if hasattr(Runnable, "ainvoke") else None
+            )
 
             if RunnableSequence:
                 self._original_seq_invoke = RunnableSequence.invoke
-                self._original_seq_ainvoke = RunnableSequence.ainvoke if hasattr(RunnableSequence, 'ainvoke') else None
+                self._original_seq_ainvoke = (
+                    RunnableSequence.ainvoke
+                    if hasattr(RunnableSequence, "ainvoke")
+                    else None
+                )
 
             # Create wrapped invoke method
             def wrapped_invoke(self_runnable, input, config=None, **kwargs):
                 """Wrapped invoke that automatically includes Chaukas callback."""
                 if config is None:
                     config = {}
-                if 'callbacks' not in config:
-                    config['callbacks'] = []
-                if chaukas_callback not in config['callbacks']:
-                    config['callbacks'].append(chaukas_callback)
+                if "callbacks" not in config:
+                    config["callbacks"] = []
+                if chaukas_callback not in config["callbacks"]:
+                    config["callbacks"].append(chaukas_callback)
 
                 # Call the original method
                 if RunnableSequence and isinstance(self_runnable, RunnableSequence):
-                    return self._original_seq_invoke(self_runnable, input, config=config, **kwargs)
+                    return self._original_seq_invoke(
+                        self_runnable, input, config=config, **kwargs
+                    )
                 else:
-                    return self._original_runnable_invoke(self_runnable, input, config=config, **kwargs)
+                    return self._original_runnable_invoke(
+                        self_runnable, input, config=config, **kwargs
+                    )
 
             # Create wrapped async invoke method
             async def wrapped_ainvoke(self_runnable, input, config=None, **kwargs):
                 """Wrapped async invoke that automatically includes Chaukas callback."""
                 if config is None:
                     config = {}
-                if 'callbacks' not in config:
-                    config['callbacks'] = []
-                if chaukas_callback not in config['callbacks']:
-                    config['callbacks'].append(chaukas_callback)
+                if "callbacks" not in config:
+                    config["callbacks"] = []
+                if chaukas_callback not in config["callbacks"]:
+                    config["callbacks"].append(chaukas_callback)
 
                 # Call the original method
                 if RunnableSequence and isinstance(self_runnable, RunnableSequence):
-                    return await self._original_seq_ainvoke(self_runnable, input, config=config, **kwargs)
+                    return await self._original_seq_ainvoke(
+                        self_runnable, input, config=config, **kwargs
+                    )
                 else:
-                    return await self._original_runnable_ainvoke(self_runnable, input, config=config, **kwargs)
+                    return await self._original_runnable_ainvoke(
+                        self_runnable, input, config=config, **kwargs
+                    )
 
             # Patch the methods
             Runnable.invoke = wrapped_invoke
@@ -130,14 +146,18 @@ class LangChainWrapper:
                 if self._original_seq_ainvoke:
                     RunnableSequence.ainvoke = wrapped_ainvoke
 
-            logger.info("LangChain auto-instrumentation enabled - all operations will be tracked automatically")
+            logger.info(
+                "LangChain auto-instrumentation enabled - all operations will be tracked automatically"
+            )
             return True
 
         except ImportError as e:
             logger.debug(f"LangChain not installed: {e}")
             return False
         except Exception as e:
-            logger.warning(f"Failed to auto-instrument LangChain: {e}. You can still use chaukas.get_langchain_callback() manually.")
+            logger.warning(
+                f"Failed to auto-instrument LangChain: {e}. You can still use chaukas.get_langchain_callback() manually."
+            )
             return False
 
     def remove_auto_instrument(self):
@@ -148,9 +168,9 @@ class LangChainWrapper:
             except ImportError:
                 from langchain.schema.runnable import Runnable
 
-            if hasattr(self, '_original_invoke'):
+            if hasattr(self, "_original_invoke"):
                 Runnable.invoke = self._original_invoke
-            if hasattr(self, '_original_ainvoke') and self._original_ainvoke:
+            if hasattr(self, "_original_ainvoke") and self._original_ainvoke:
                 Runnable.ainvoke = self._original_ainvoke
 
             logger.info("LangChain auto-instrumentation removed")
@@ -160,6 +180,7 @@ class LangChainWrapper:
     def _send_event_sync(self, event):
         """Helper to send event from sync context."""
         import asyncio
+
         try:
             # Try to get the running loop
             loop = asyncio.get_running_loop()
@@ -191,11 +212,12 @@ class LangChainWrapper:
 
         try:
             import os
+
             process = psutil.Process(os.getpid())
             return {
-                'cpu_percent': process.cpu_percent(),
-                'memory_mb': process.memory_info().rss / 1024 / 1024,
-                'num_threads': process.num_threads()
+                "cpu_percent": process.cpu_percent(),
+                "memory_mb": process.memory_info().rss / 1024 / 1024,
+                "num_threads": process.num_threads(),
             }
         except Exception:
             return {}
@@ -289,7 +311,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                         "chain_type": chain_type,
                         "chain_id": str(run_id),
                         "inputs": str(inputs)[:500],
-                        "tags": tags or []
+                        "tags": tags or [],
                     }
                 )
                 self.wrapper._send_event_sync(session_start)
@@ -297,14 +319,16 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 self._chain_spans[str(run_id)] = session_start.span_id
 
                 # Set session context
-                self.tracer.set_session_context(session_start.session_id, session_start.trace_id)
+                self.tracer.set_session_context(
+                    session_start.session_id, session_start.trace_id
+                )
                 self.tracer.set_parent_span_context(self._session_span_id)
 
                 # Emit INPUT_RECEIVED
                 if inputs:
                     input_event = self.event_builder.create_input_received(
                         content=str(inputs)[:1000],
-                        metadata={"chain_type": chain_type, "run_id": str(run_id)}
+                        metadata={"chain_type": chain_type, "run_id": str(run_id)},
                     )
                     self.wrapper._send_event_sync(input_event)
 
@@ -314,7 +338,10 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 agent_name = chain_type
 
                 # Check for agent handoff
-                if self._last_active_agent and self._last_active_agent != (agent_id, agent_name):
+                if self._last_active_agent and self._last_active_agent != (
+                    agent_id,
+                    agent_name,
+                ):
                     last_id, last_name = self._last_active_agent
                     handoff_event = self.event_builder.create_agent_handoff(
                         from_agent_id=last_id,
@@ -323,7 +350,10 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                         to_agent_name=agent_name,
                         reason="Chain delegation",
                         handoff_type="sequential",
-                        handoff_data={"framework": "langchain", "chain_type": chain_type}
+                        handoff_data={
+                            "framework": "langchain",
+                            "chain_type": chain_type,
+                        },
                     )
                     self.wrapper._send_event_sync(handoff_event)
 
@@ -338,8 +368,8 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                     metadata={
                         "framework": "langchain",
                         "chain_type": chain_type,
-                        "inputs": str(inputs)[:500]
-                    }
+                        "inputs": str(inputs)[:500],
+                    },
                 )
                 self.wrapper._send_event_sync(agent_start)
                 self._agent_spans[agent_id] = agent_start.span_id
@@ -377,8 +407,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 # Emit OUTPUT_EMITTED
                 if outputs:
                     output_event = self.event_builder.create_output_emitted(
-                        content=str(outputs)[:1000],
-                        metadata={"run_id": run_id_str}
+                        content=str(outputs)[:1000], metadata={"run_id": run_id_str}
                     )
                     self.wrapper._send_event_sync(output_event)
 
@@ -390,9 +419,9 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                         "framework": "langchain",
                         "success": True,
                         "duration_ms": duration_ms,
-                        "cpu_percent": metrics.get('cpu_percent'),
-                        "memory_mb": metrics.get('memory_mb')
-                    }
+                        "cpu_percent": metrics.get("cpu_percent"),
+                        "memory_mb": metrics.get("memory_mb"),
+                    },
                 )
                 self.wrapper._send_event_sync(session_end)
 
@@ -412,8 +441,8 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                     metadata={
                         "framework": "langchain",
                         "outputs": str(outputs)[:500],
-                        "duration_ms": duration_ms
-                    }
+                        "duration_ms": duration_ms,
+                    },
                 )
                 self.wrapper._send_event_sync(agent_end)
 
@@ -442,8 +471,8 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                     retry_event = self.event_builder.create_retry(
                         attempt=retry_count + 1,
                         strategy="exponential",
-                        backoff_ms=1000 * (2 ** retry_count),
-                        reason=f"Chain execution failed: {error_msg}"
+                        backoff_ms=1000 * (2**retry_count),
+                        reason=f"Chain execution failed: {error_msg}",
                     )
                     self.wrapper._send_event_sync(retry_event)
 
@@ -451,7 +480,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
             error_event = self.event_builder.create_error(
                 error_message=error_msg,
                 error_code=type(error).__name__,
-                recoverable=self._is_retryable_error(error_msg)
+                recoverable=self._is_retryable_error(error_msg),
             )
             self.wrapper._send_event_sync(error_event)
 
@@ -498,7 +527,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 agent_name=agent_name,
                 temperature=kwargs.get("temperature"),
                 max_tokens=kwargs.get("max_tokens"),
-                tools=tags
+                tools=tags,
             )
             self.wrapper._send_event_sync(llm_start)
             self._llm_spans[str(run_id)] = llm_start.span_id
@@ -530,15 +559,11 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
             for message_list in messages:
                 for msg in message_list:
                     if hasattr(msg, "type") and hasattr(msg, "content"):
-                        formatted_messages.append({
-                            "role": msg.type,
-                            "content": str(msg.content)
-                        })
+                        formatted_messages.append(
+                            {"role": msg.type, "content": str(msg.content)}
+                        )
                     else:
-                        formatted_messages.append({
-                            "role": "user",
-                            "content": str(msg)
-                        })
+                        formatted_messages.append({"role": "user", "content": str(msg)})
 
             # Get agent context
             agent_id, agent_name = self._get_current_agent_context()
@@ -551,7 +576,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 agent_name=agent_name,
                 temperature=kwargs.get("temperature"),
                 max_tokens=kwargs.get("max_tokens"),
-                tools=tags
+                tools=tags,
             )
             self.wrapper._send_event_sync(llm_start)
             self._llm_spans[str(run_id)] = llm_start.span_id
@@ -596,7 +621,9 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 if hasattr(gen, "message") and hasattr(gen.message, "content"):
                     response_content = gen.message.content
                 # Extract tool calls if present
-                if hasattr(gen, "message") and hasattr(gen.message, "additional_kwargs"):
+                if hasattr(gen, "message") and hasattr(
+                    gen.message, "additional_kwargs"
+                ):
                     tool_calls_data = gen.message.additional_kwargs.get("tool_calls")
                     if tool_calls_data:
                         tool_calls = tool_calls_data
@@ -624,7 +651,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 span_id=span_id,
                 agent_id=agent_id,
                 agent_name=agent_name,
-                error=None
+                error=None,
             )
             self.wrapper._send_event_sync(llm_end)
 
@@ -655,8 +682,8 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                     retry_event = self.event_builder.create_retry(
                         attempt=retry_count + 1,
                         strategy="exponential",
-                        backoff_ms=1000 * (2 ** retry_count),
-                        reason=f"LLM call failed: {error_msg}"
+                        backoff_ms=1000 * (2**retry_count),
+                        reason=f"LLM call failed: {error_msg}",
                     )
                     self.wrapper._send_event_sync(retry_event)
 
@@ -669,7 +696,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 error_code=type(error).__name__,
                 recoverable=self._is_retryable_error(error_msg),
                 agent_id=agent_id,
-                agent_name=agent_name
+                agent_name=agent_name,
             )
             self.wrapper._send_event_sync(error_event)
 
@@ -683,7 +710,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 span_id=span_id,
                 agent_id=agent_id,
                 agent_name=agent_name,
-                error=error_msg
+                error=error_msg,
             )
             self.wrapper._send_event_sync(llm_end)
 
@@ -720,7 +747,11 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 arguments = inputs
             elif input_str:
                 try:
-                    arguments = json.loads(input_str) if input_str.startswith("{") else {"input": input_str}
+                    arguments = (
+                        json.loads(input_str)
+                        if input_str.startswith("{")
+                        else {"input": input_str}
+                    )
                 except:
                     arguments = {"input": input_str}
 
@@ -732,7 +763,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 arguments=arguments,
                 call_id=str(run_id),
                 agent_id=agent_id,
-                agent_name=agent_name
+                agent_name=agent_name,
             )
             self.wrapper._send_event_sync(tool_start)
             self._tool_spans[str(run_id)] = tool_start.span_id
@@ -773,7 +804,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 execution_time_ms=duration_ms,
                 span_id=span_id,
                 agent_id=agent_id,
-                agent_name=agent_name
+                agent_name=agent_name,
             )
             self.wrapper._send_event_sync(tool_end)
 
@@ -805,7 +836,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                         attempt=retry_count + 1,
                         strategy="linear",
                         backoff_ms=500 * (retry_count + 1),
-                        reason=f"Tool execution failed: {error_msg}"
+                        reason=f"Tool execution failed: {error_msg}",
                     )
                     self.wrapper._send_event_sync(retry_event)
 
@@ -818,7 +849,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 error_code=type(error).__name__,
                 recoverable=self._is_retryable_error(error_msg),
                 agent_id=agent_id,
-                agent_name=agent_name
+                agent_name=agent_name,
             )
             self.wrapper._send_event_sync(error_event)
 
@@ -831,7 +862,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 execution_time_ms=None,
                 span_id=span_id,
                 agent_id=agent_id,
-                agent_name=agent_name
+                agent_name=agent_name,
             )
             self.wrapper._send_event_sync(tool_end)
 
@@ -885,8 +916,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
             # Emit OUTPUT_EMITTED if we have output
             if output:
                 output_event = self.event_builder.create_output_emitted(
-                    content=str(output)[:1000],
-                    metadata={"run_id": str(run_id)}
+                    content=str(output)[:1000], metadata={"run_id": str(run_id)}
                 )
                 self.wrapper._send_event_sync(output_event)
 
@@ -910,7 +940,9 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
         try:
             self._start_times[str(run_id)] = time.time()
 
-            retriever_name = serialized.get("name", "unknown") if serialized else "unknown"
+            retriever_name = (
+                serialized.get("name", "unknown") if serialized else "unknown"
+            )
 
             # Get agent context
             agent_id, agent_name = self._get_current_agent_context()
@@ -921,7 +953,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 chunk_ids=None,
                 pii_categories=None,
                 agent_id=agent_id,
-                agent_name=agent_name
+                agent_name=agent_name,
             )
             self.wrapper._send_event_sync(data_event)
             self._retriever_spans[str(run_id)] = data_event.span_id
@@ -958,7 +990,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 chunk_ids=None,
                 pii_categories=None,
                 agent_id=agent_id,
-                agent_name=agent_name
+                agent_name=agent_name,
             )
             self.wrapper._send_event_sync(data_event)
 
@@ -991,7 +1023,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 error_code=type(error).__name__,
                 recoverable=self._is_retryable_error(error_msg),
                 agent_id=agent_id,
-                agent_name=agent_name
+                agent_name=agent_name,
             )
             self.wrapper._send_event_sync(error_event)
 
@@ -1015,13 +1047,17 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
     ) -> Any:
         """Run on retry. Maps to RETRY event."""
         try:
-            attempt = retry_state.attempt_number if hasattr(retry_state, "attempt_number") else 1
+            attempt = (
+                retry_state.attempt_number
+                if hasattr(retry_state, "attempt_number")
+                else 1
+            )
 
             retry_event = self.event_builder.create_retry(
                 attempt=attempt,
                 strategy="exponential",
                 backoff_ms=1000 * (2 ** (attempt - 1)),
-                reason=f"Retry attempt {attempt}"
+                reason=f"Retry attempt {attempt}",
             )
             self.wrapper._send_event_sync(retry_event)
 
@@ -1033,8 +1069,14 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
     def _is_retryable_error(self, error_msg: str) -> bool:
         """Check if an error is retryable."""
         retryable_patterns = [
-            "rate limit", "timeout", "connection", "temporary",
-            "503", "429", "network", "unavailable"
+            "rate limit",
+            "timeout",
+            "connection",
+            "temporary",
+            "503",
+            "429",
+            "network",
+            "unavailable",
         ]
         error_lower = error_msg.lower()
         return any(pattern in error_lower for pattern in retryable_patterns)
@@ -1046,7 +1088,9 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
             return "openai"
         elif "anthropic" in model_lower or "claude" in model_lower:
             return "anthropic"
-        elif "google" in model_lower or "gemini" in model_lower or "palm" in model_lower:
+        elif (
+            "google" in model_lower or "gemini" in model_lower or "palm" in model_lower
+        ):
             return "google"
         elif "cohere" in model_lower:
             return "cohere"

@@ -85,10 +85,7 @@ class TestChainCallbacks:
 
         # Execute
         callback_handler.on_chain_start(
-            serialized=serialized,
-            inputs=inputs,
-            run_id=run_id,
-            parent_run_id=None
+            serialized=serialized, inputs=inputs, run_id=run_id, parent_run_id=None
         )
 
         # Verify SESSION_START was emitted
@@ -107,10 +104,7 @@ class TestChainCallbacks:
         """Test on_chain_start for agent chain creates AGENT_START."""
         # First start root chain
         callback_handler.on_chain_start(
-            serialized={"name": "root"},
-            inputs={},
-            run_id="root_1",
-            parent_run_id=None
+            serialized={"name": "root"}, inputs={}, run_id="root_1", parent_run_id=None
         )
 
         mock_client.sent_events.clear()
@@ -121,10 +115,7 @@ class TestChainCallbacks:
         run_id = "agent_123"
 
         callback_handler.on_chain_start(
-            serialized=serialized,
-            inputs=inputs,
-            run_id=run_id,
-            parent_run_id="root_1"
+            serialized=serialized, inputs=inputs, run_id=run_id, parent_run_id="root_1"
         )
 
         # Verify AGENT_START was emitted
@@ -143,19 +134,14 @@ class TestChainCallbacks:
         # Start session first
         run_id = "chain_123"
         callback_handler.on_chain_start(
-            serialized={"name": "test"},
-            inputs={},
-            run_id=run_id,
-            parent_run_id=None
+            serialized={"name": "test"}, inputs={}, run_id=run_id, parent_run_id=None
         )
 
         mock_client.sent_events.clear()
 
         # End chain
         callback_handler.on_chain_end(
-            outputs={"result": "success"},
-            run_id=run_id,
-            parent_run_id=None
+            outputs={"result": "success"}, run_id=run_id, parent_run_id=None
         )
 
         # Verify SESSION_END was emitted
@@ -174,21 +160,14 @@ class TestChainCallbacks:
         # Start chain
         run_id = "chain_123"
         callback_handler.on_chain_start(
-            serialized={"name": "test"},
-            inputs={},
-            run_id=run_id,
-            parent_run_id=None
+            serialized={"name": "test"}, inputs={}, run_id=run_id, parent_run_id=None
         )
 
         mock_client.sent_events.clear()
 
         # Trigger error
         error = Exception("Test error")
-        callback_handler.on_chain_error(
-            error=error,
-            run_id=run_id,
-            parent_run_id=None
-        )
+        callback_handler.on_chain_error(error=error, run_id=run_id, parent_run_id=None)
 
         # Verify ERROR event was emitted
         error_event = None
@@ -212,10 +191,7 @@ class TestLLMCallbacks:
         run_id = "llm_123"
 
         callback_handler.on_llm_start(
-            serialized=serialized,
-            prompts=prompts,
-            run_id=run_id,
-            parent_run_id=None
+            serialized=serialized, prompts=prompts, run_id=run_id, parent_run_id=None
         )
 
         # Verify MODEL_INVOCATION_START was emitted
@@ -244,10 +220,7 @@ class TestLLMCallbacks:
         run_id = "chat_123"
 
         callback_handler.on_chat_model_start(
-            serialized=serialized,
-            messages=messages,
-            run_id=run_id,
-            parent_run_id=None
+            serialized=serialized, messages=messages, run_id=run_id, parent_run_id=None
         )
 
         # Verify MODEL_INVOCATION_START was emitted
@@ -268,7 +241,7 @@ class TestLLMCallbacks:
             serialized={"name": "gpt-4"},
             prompts=["test"],
             run_id=run_id,
-            parent_run_id=None
+            parent_run_id=None,
         )
 
         mock_client.sent_events.clear()
@@ -285,17 +258,14 @@ class TestLLMCallbacks:
                     "token_usage": {
                         "prompt_tokens": 10,
                         "completion_tokens": 20,
-                        "total_tokens": 30
+                        "total_tokens": 30,
                     }
                 }
 
         response = MockResponse()
 
         callback_handler.on_llm_end(
-            response=response,
-            run_id=run_id,
-            parent_run_id=None,
-            name="gpt-4"
+            response=response, run_id=run_id, parent_run_id=None, name="gpt-4"
         )
 
         # Verify MODEL_INVOCATION_END was emitted
@@ -316,7 +286,7 @@ class TestLLMCallbacks:
             serialized={"name": "gpt-4"},
             prompts=["test"],
             run_id=run_id,
-            parent_run_id=None
+            parent_run_id=None,
         )
 
         mock_client.sent_events.clear()
@@ -324,10 +294,7 @@ class TestLLMCallbacks:
         # Trigger error
         error = Exception("Rate limit exceeded")
         callback_handler.on_llm_error(
-            error=error,
-            run_id=run_id,
-            parent_run_id=None,
-            name="gpt-4"
+            error=error, run_id=run_id, parent_run_id=None, name="gpt-4"
         )
 
         # Verify ERROR and MODEL_INVOCATION_END were emitted
@@ -358,7 +325,7 @@ class TestToolCallbacks:
             serialized=serialized,
             input_str=input_str,
             run_id=run_id,
-            parent_run_id=None
+            parent_run_id=None,
         )
 
         # Verify TOOL_CALL_START was emitted
@@ -380,17 +347,14 @@ class TestToolCallbacks:
             serialized={"name": "calculator"},
             input_str="test",
             run_id=run_id,
-            parent_run_id=None
+            parent_run_id=None,
         )
 
         mock_client.sent_events.clear()
 
         # End tool
         callback_handler.on_tool_end(
-            output="3",
-            run_id=run_id,
-            parent_run_id=None,
-            name="calculator"
+            output="3", run_id=run_id, parent_run_id=None, name="calculator"
         )
 
         # Verify TOOL_CALL_END was emitted
@@ -412,7 +376,7 @@ class TestToolCallbacks:
             serialized={"name": "calculator"},
             input_str="test",
             run_id=run_id,
-            parent_run_id=None
+            parent_run_id=None,
         )
 
         mock_client.sent_events.clear()
@@ -420,10 +384,7 @@ class TestToolCallbacks:
         # Trigger error
         error = Exception("Tool execution failed")
         callback_handler.on_tool_error(
-            error=error,
-            run_id=run_id,
-            parent_run_id=None,
-            name="calculator"
+            error=error, run_id=run_id, parent_run_id=None, name="calculator"
         )
 
         # Verify ERROR and TOOL_CALL_END were emitted
@@ -450,10 +411,7 @@ class TestRetrieverCallbacks:
         run_id = "retriever_123"
 
         callback_handler.on_retriever_start(
-            serialized=serialized,
-            query=query,
-            run_id=run_id,
-            parent_run_id=None
+            serialized=serialized, query=query, run_id=run_id, parent_run_id=None
         )
 
         # Verify DATA_ACCESS was emitted
@@ -475,7 +433,7 @@ class TestRetrieverCallbacks:
             serialized={"name": "vector_store"},
             query="test",
             run_id=run_id,
-            parent_run_id=None
+            parent_run_id=None,
         )
 
         mock_client.sent_events.clear()
@@ -488,9 +446,7 @@ class TestRetrieverCallbacks:
         documents = [MockDocument("doc1"), MockDocument("doc2")]
 
         callback_handler.on_retriever_end(
-            documents=documents,
-            run_id=run_id,
-            parent_run_id=None
+            documents=documents, run_id=run_id, parent_run_id=None
         )
 
         # Verify DATA_ACCESS was emitted
@@ -511,7 +467,7 @@ class TestRetrieverCallbacks:
             serialized={"name": "vector_store"},
             query="test",
             run_id=run_id,
-            parent_run_id=None
+            parent_run_id=None,
         )
 
         mock_client.sent_events.clear()
@@ -519,9 +475,7 @@ class TestRetrieverCallbacks:
         # Trigger error
         error = Exception("Retrieval failed")
         callback_handler.on_retriever_error(
-            error=error,
-            run_id=run_id,
-            parent_run_id=None
+            error=error, run_id=run_id, parent_run_id=None
         )
 
         # Verify ERROR was emitted
@@ -541,6 +495,7 @@ class TestAgentCallbacks:
 
     def test_on_agent_finish(self, callback_handler, mock_client):
         """Test on_agent_finish creates OUTPUT_EMITTED."""
+
         # Mock finish object
         class MockAgentFinish:
             def __init__(self):
@@ -549,9 +504,7 @@ class TestAgentCallbacks:
         finish = MockAgentFinish()
 
         callback_handler.on_agent_finish(
-            finish=finish,
-            run_id="agent_123",
-            parent_run_id=None
+            finish=finish, run_id="agent_123", parent_run_id=None
         )
 
         # Verify OUTPUT_EMITTED was emitted
@@ -570,6 +523,7 @@ class TestRetryCallbacks:
 
     def test_on_retry(self, callback_handler, mock_client):
         """Test on_retry creates RETRY event."""
+
         # Mock retry state
         class MockRetryState:
             def __init__(self):
@@ -578,9 +532,7 @@ class TestRetryCallbacks:
         retry_state = MockRetryState()
 
         callback_handler.on_retry(
-            retry_state=retry_state,
-            run_id="retry_123",
-            parent_run_id=None
+            retry_state=retry_state, run_id="retry_123", parent_run_id=None
         )
 
         # Verify RETRY event was emitted
@@ -633,10 +585,7 @@ class TestAgentHandoff:
         """Test agent handoff event creation."""
         # Start root chain
         callback_handler.on_chain_start(
-            serialized={"name": "root"},
-            inputs={},
-            run_id="root_1",
-            parent_run_id=None
+            serialized={"name": "root"}, inputs={}, run_id="root_1", parent_run_id=None
         )
 
         # Start first agent
@@ -644,7 +593,7 @@ class TestAgentHandoff:
             serialized={"name": "agent_1"},
             inputs={},
             run_id="agent_1",
-            parent_run_id="root_1"
+            parent_run_id="root_1",
         )
 
         mock_client.sent_events.clear()
@@ -654,7 +603,7 @@ class TestAgentHandoff:
             serialized={"name": "agent_2"},
             inputs={},
             run_id="agent_2",
-            parent_run_id="root_1"
+            parent_run_id="root_1",
         )
 
         # Verify AGENT_HANDOFF was emitted
