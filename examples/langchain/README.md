@@ -102,7 +102,7 @@ chaukas.enable_chaukas()
 result = chain.invoke(input_data)
 ```
 
-Chaukas automatically injects its callback handler into LangChain's global callback system, so you don't need to manually pass callbacks anymore!
+Chaukas automatically patches LangChain's Runnable methods to inject callbacks, so you don't need to manually pass callbacks anymore!
 
 ## Key Differences from Other Integrations
 
@@ -110,9 +110,9 @@ All three major frameworks now have the same one-line setup:
 
 - **OpenAI Agents**: Automatic via method patching - `chaukas.enable_chaukas()` is enough
 - **CrewAI**: Automatic via event bus hooking - `chaukas.enable_chaukas()` is enough
-- **LangChain**: Automatic via global callback injection - `chaukas.enable_chaukas()` is enough ✨
+- **LangChain**: Automatic via Runnable method patching - `chaukas.enable_chaukas()` is enough ✨
 
-Chaukas automatically injects its callback handler into LangChain's global default callbacks, providing the same seamless one-line setup as other frameworks.
+Chaukas automatically patches LangChain's Runnable methods to inject callbacks, providing the same seamless one-line setup as other frameworks.
 
 ### Manual Callback Usage (Optional)
 
