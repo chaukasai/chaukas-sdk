@@ -752,7 +752,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                         if input_str.startswith("{")
                         else {"input": input_str}
                     )
-                except:
+                except (json.JSONDecodeError, ValueError):
                     arguments = {"input": input_str}
 
             # Get agent context
