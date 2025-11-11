@@ -95,6 +95,12 @@ class LangChainWrapper:
                     else None
                 )
 
+            # Store references for closure to avoid confusing self capture
+            original_runnable_invoke = self._original_runnable_invoke
+            original_runnable_ainvoke = self._original_runnable_ainvoke
+            original_seq_invoke = self._original_seq_invoke if RunnableSequence else None
+            original_seq_ainvoke = self._original_seq_ainvoke if RunnableSequence else None
+
             # Create wrapped invoke method
             def wrapped_invoke(self_runnable, input, config=None, **kwargs):
                 """Wrapped invoke that automatically includes Chaukas callback."""
@@ -107,11 +113,11 @@ class LangChainWrapper:
 
                 # Call the original method
                 if RunnableSequence and isinstance(self_runnable, RunnableSequence):
-                    return self._original_seq_invoke(
+                    return original_seq_invoke(
                         self_runnable, input, config=config, **kwargs
                     )
                 else:
-                    return self._original_runnable_invoke(
+                    return original_runnable_invoke(
                         self_runnable, input, config=config, **kwargs
                     )
 
@@ -127,11 +133,11 @@ class LangChainWrapper:
 
                 # Call the original method
                 if RunnableSequence and isinstance(self_runnable, RunnableSequence):
-                    return await self._original_seq_ainvoke(
+                    return await original_seq_ainvoke(
                         self_runnable, input, config=config, **kwargs
                     )
                 else:
-                    return await self._original_runnable_ainvoke(
+                    return await original_runnable_ainvoke(
                         self_runnable, input, config=config, **kwargs
                     )
 
