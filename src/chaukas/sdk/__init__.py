@@ -47,6 +47,7 @@ __all__ = [
     "is_enabled",
     "get_tracer",
     "get_client",
+    "get_langchain_callback",
     "ChaukasClient",
     "ChaukasTracer",
     "ChaukasConfig",
@@ -260,3 +261,49 @@ def get_tracer() -> Optional[ChaukasTracer]:
 def get_client() -> Optional[ChaukasClient]:
     """Get the current client instance."""
     return _client
+
+
+def get_langchain_callback():
+    """
+    Get the LangChain callback handler for instrumentation.
+
+    This handler should be passed to LangChain chains/agents via the callbacks parameter.
+
+    Returns:
+        BaseCallbackHandler instance configured for Chaukas event capture.
+
+    Example:
+        >>> import chaukas
+        >>> chaukas.enable_chaukas()
+        >>> callback = chaukas.get_langchain_callback()
+        >>>
+        >>> # Use with chains
+        >>> chain.invoke(input, config={'callbacks': [callback]})
+        >>>
+        >>> # Use with agents
+        >>> agent_executor.invoke(input, config={'callbacks': [callback]})
+
+    Raises:
+        RuntimeError: If Chaukas is not enabled. Call enable_chaukas() first.
+    """
+    global _patcher
+
+    if not _enabled:
+        raise RuntimeError("Chaukas is not enabled. Call chaukas.enable_chaukas() first.")
+
+    if _patcher is None:
+        raise RuntimeError("MonkeyPatcher not initialized.")
+
+    # Find the LangChain wrapper in the patcher's wrappers
+    for wrapper in _patcher._wrappers:
+        if hasattr(wrapper, 'get_callback_handler'):
+            return wrapper.get_callback_handler()
+
+    # If not found, try to create it
+    try:
+        from chaukas.sdk.integrations.langchain import LangChainWrapper
+        wrapper = LangChainWrapper(_tracer)
+        _patcher._wrappers.append(wrapper)
+        return wrapper.get_callback_handler()
+    except ImportError:
+        raise RuntimeError("LangChain integration not available. Is LangChain installed?")

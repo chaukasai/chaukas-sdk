@@ -77,6 +77,7 @@ class MonkeyPatcher:
             "openai_agents": "agents",
             "google_adk": "adk",
             "crewai": "crewai",
+            "langchain": "langchain",
         }
 
         for sdk_name, module_name in sdk_modules.items():
@@ -137,6 +138,17 @@ class MonkeyPatcher:
         # Apply direct patches
         wrapper.patch_crew()
         wrapper.patch_agent()
+
+    def _patch_langchain(self) -> None:
+        """Apply patches for LangChain."""
+        from chaukas.sdk.integrations.langchain import LangChainWrapper
+        wrapper = LangChainWrapper(self.tracer)
+        self._wrappers.append(wrapper)  # Store wrapper for cleanup
+
+        # LangChain uses a callback-based approach, so we don't patch methods directly
+        # Instead, users need to pass the callback handler to their chains/agents
+        logger.info("LangChain wrapper initialized. Use chaukas.get_langchain_callback() to get the callback handler")
+        logger.info("Example: chain.invoke(input, config={'callbacks': [chaukas.get_langchain_callback()]})")
 
     def _add_patch(
         self,
