@@ -54,11 +54,11 @@ openai = ["openai-agents>=0.5.0,<1.0.0"]
 google = ["adk"]
 crewai = ["crewai>=1.4.1,<2.0.0"]
 langchain = [
-    "langchain>=0.1.0,<1.0.0",
-    "langchain-core>=0.1.0,<1.0.0",
-    "langchain-openai>=0.0.1,<1.0.0",
-    "langchain-community>=0.0.1,<1.0.0",
-    "langchain-text-splitters>=0.0.1,<1.0.0",
+    "langchain>=0.1.0,<2.0",
+    "langchain-core>=0.1.0,<2.0",
+    "langchain-openai>=0.0.1,<2.0",
+    "langchain-community>=0.0.1,<2.0",
+    "langchain-text-splitters>=0.0.1,<2.0",
     "faiss-cpu>=1.7.0,<2.0.0",  # For vector store examples
 ]
 dev = [
@@ -70,11 +70,11 @@ dev = [
     "isort>=5.12.0",
     "mypy>=1.0.0",
     # Include LangChain for testing
-    "langchain>=0.1.0,<1.0.0",
-    "langchain-core>=0.1.0,<1.0.0",
-    "langchain-openai>=0.0.1,<1.0.0",
-    "langchain-community>=0.0.1,<1.0.0",
-    "langchain-text-splitters>=0.0.1,<1.0.0",
+    "langchain>=0.1.0,<2.0",
+    "langchain-core>=0.1.0,<2.0",
+    "langchain-openai>=0.0.1,<2.0",
+    "langchain-community>=0.0.1,<2.0",
+    "langchain-text-splitters>=0.0.1,<2.0",
     "faiss-cpu>=1.7.0,<2.0.0",
 ]
 
