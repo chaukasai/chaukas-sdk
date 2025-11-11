@@ -98,8 +98,12 @@ class LangChainWrapper:
             # Store references for closure to avoid confusing self capture
             original_runnable_invoke = self._original_runnable_invoke
             original_runnable_ainvoke = self._original_runnable_ainvoke
-            original_seq_invoke = self._original_seq_invoke if RunnableSequence else None
-            original_seq_ainvoke = self._original_seq_ainvoke if RunnableSequence else None
+            original_seq_invoke = (
+                self._original_seq_invoke if RunnableSequence else None
+            )
+            original_seq_ainvoke = (
+                self._original_seq_ainvoke if RunnableSequence else None
+            )
 
             # Create wrapped invoke method
             def wrapped_invoke(self_runnable, input, config=None, **kwargs):
