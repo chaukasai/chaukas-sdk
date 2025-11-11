@@ -8,8 +8,6 @@ This example demonstrates LangChain retriever usage. It captures:
 - All standard chain events
 """
 
-import os
-
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
