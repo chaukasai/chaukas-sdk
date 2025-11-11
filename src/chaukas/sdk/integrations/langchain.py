@@ -3,12 +3,10 @@ LangChain integration for Chaukas instrumentation.
 Uses BaseCallbackHandler for comprehensive event capture with ~95% event coverage.
 """
 
-import functools
 import json
 import logging
 import time
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 # Optional performance monitoring
 try:
@@ -20,7 +18,6 @@ except ImportError:
 
 from chaukas.spec.common.v1.events_pb2 import EventStatus
 
-from chaukas.sdk.core.agent_mapper import AgentMapper
 from chaukas.sdk.core.event_builder import EventBuilder
 from chaukas.sdk.core.tracer import ChaukasTracer
 
@@ -195,7 +192,10 @@ class LangChainWrapper:
             if RunnableSequence:
                 if hasattr(self, "_original_seq_invoke"):
                     RunnableSequence.invoke = self._original_seq_invoke
-                if hasattr(self, "_original_seq_ainvoke") and self._original_seq_ainvoke:
+                if (
+                    hasattr(self, "_original_seq_ainvoke")
+                    and self._original_seq_ainvoke
+                ):
                     RunnableSequence.ainvoke = self._original_seq_ainvoke
 
             logger.info("LangChain auto-instrumentation removed")
@@ -208,7 +208,7 @@ class LangChainWrapper:
 
         try:
             # Try to get the running loop
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # We're in an async context, schedule the task
             asyncio.create_task(self.tracer.client.send_event(event))
         except RuntimeError:
@@ -996,7 +996,8 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
         """Run when retriever ends. Maps to DATA_ACCESS with results."""
         try:
             run_id_str = str(run_id)
-            span_id = self._retriever_spans.pop(run_id_str, None)
+            # Clean up span tracking
+            self._retriever_spans.pop(run_id_str, None)
 
             # Extract document IDs
             doc_ids = []
