@@ -9,7 +9,7 @@ This is a namespace package that contains both:
 # Declare this as a namespace package
 __path__ = __import__("pkgutil").extend_path(__path__, __name__)
 
-# Re-export SDK functions for convenience (import chaukas.enable_chaukas())
+# Re-export SDK functions for convenience
 try:
     from chaukas.sdk import (
         enable_chaukas,
@@ -17,7 +17,6 @@ try:
         is_enabled,
         get_tracer,
         get_client,
-        get_langchain_callback,
     )
 
     __all__ = [
@@ -26,7 +25,6 @@ try:
         "is_enabled",
         "get_tracer",
         "get_client",
-        "get_langchain_callback",
     ]
 except ImportError:
     # SDK not installed yet
