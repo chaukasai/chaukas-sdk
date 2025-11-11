@@ -155,6 +155,32 @@ agent = Agent(name="assistant")
 response = agent.run("Hello!")
 ```
 
+#### LangChain
+
+```python
+import chaukas
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain_core.output_parsers import StrOutputParser
+
+chaukas.enable_chaukas()
+
+# Your LangChain code works unchanged
+prompt = ChatPromptTemplate.from_template("Tell me a joke about {topic}")
+llm = ChatOpenAI(model="gpt-4")
+chain = prompt | llm | StrOutputParser()
+
+result = chain.invoke({"topic": "programming"})
+
+# Chaukas automatically captures:
+# ✅ Session start/end
+# ✅ Chain lifecycle
+# ✅ LLM invocations with tokens
+# ✅ Tool calls (if using agents)
+# ✅ RAG operations (retriever tracking)
+# ✅ Errors and retries
+```
+
 ## 📊 Supported Frameworks
 
 Chaukas SDK implements the **[chaukas-spec](https://github.com/chaukasai/chaukas-spec)** — a standardized event schema with **19 event types** for AI agent observability.
@@ -163,9 +189,10 @@ Chaukas SDK implements the **[chaukas-spec](https://github.com/chaukasai/chaukas
 |-----------|---------|--------|--------|-------|
 | **[OpenAI Agents](https://github.com/openai/openai-agents-python)** | `>=0.5.0,<1.0.0` | 🎉 **19/19** | 🟢 Production | Session mgmt, MCP protocol, policy tracking, state updates, retries |
 | **[CrewAI](https://github.com/crewAIInc/crewAI)** | `>=1.4.1,<2.0.0` | 🎉 **19/19** | 🟢 Production | Event bus integration, multi-agent handoffs, knowledge sources, guardrails, flows |
+| **[LangChain](https://github.com/langchain-ai/langchain)** | `>=0.1.0,<2.0` | 🎉 **18/19** | 🟢 Production | Runnable method patching, chains, agents, tools, RAG, retriever tracking |
 | **[Google ADK](https://github.com/google/adk-python)** | Latest | 🚧 **5/19** | 🟡 Under Construction | Basic agent & LLM tracking |
 
-**Coming Soon**: LangChain, LangGraph, AutoGen, Microsoft Semantic Kernel
+**Coming Soon**: LangGraph, AutoGen, Microsoft Semantic Kernel
 
 *All frameworks implementing the complete [chaukas-spec](https://github.com/chaukasai/chaukas-spec) capture all 19 event types*
 
@@ -782,9 +809,10 @@ chaukas.enable_chaukas(config={
 ## 📚 Documentation
 
 - **[chaukas-spec](https://github.com/chaukasai/chaukas-spec)** - Standardized event schema (19 event types)
-- **[Examples Repository](./examples)** - Complete working examples for OpenAI, CrewAI, and Google ADK
+- **[Examples Repository](./examples)** - Complete working examples for all supported frameworks
 - **[OpenAI Examples](./examples/openai)** - OpenAI Agents integration examples and guides
 - **[CrewAI Examples](./examples/crewai)** - CrewAI integration examples and guides
+- **[LangChain Examples](./examples/langchain)** - LangChain integration examples and guides
 - **[Google ADK Examples](./examples/adk)** - Google ADK integration examples
 
 ## 🧪 Development
