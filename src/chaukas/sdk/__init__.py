@@ -222,17 +222,14 @@ def disable_chaukas() -> None:
     if not _enabled:
         return
 
-    # Close wrappers (including session end events)
-    # if _patcher:
-    #     try:
-    #         asyncio.run(_patcher.close())
-    #     except RuntimeError:
-    #         # If there's already a running loop, schedule it as a task
-    #         try:
-    #             loop = asyncio.get_running_loop()
-    #             asyncio.create_task(_patcher.close())
-    #         except:
-    #             pass
+    # Remove LangChain auto-instrumentation if present
+    if _patcher:
+        for wrapper in _patcher._wrappers:
+            if hasattr(wrapper, 'remove_auto_instrument'):
+                try:
+                    wrapper.remove_auto_instrument()
+                except Exception as e:
+                    logger.debug(f"Failed to remove auto-instrumentation: {e}")
 
     # Close client to flush events
     _close_client_sync()

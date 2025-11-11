@@ -90,33 +90,43 @@ python multi_chain_workflow.py
 
 ## Usage Pattern
 
-All examples follow the same pattern:
+All examples follow the same simple pattern:
 
 ```python
 import chaukas
 
-# 1. Enable Chaukas instrumentation
+# Enable Chaukas instrumentation (one-line setup!)
 chaukas.enable_chaukas()
 
-# 2. Get the callback handler
-callback = chaukas.get_langchain_callback()
-
-# 3. Use callback in your chains/agents
-result = chain.invoke(
-    input_data,
-    config={"callbacks": [callback]}
-)
+# That's it! All LangChain operations are now automatically tracked
+result = chain.invoke(input_data)
 ```
+
+Chaukas automatically injects its callback handler into LangChain's global callback system, so you don't need to manually pass callbacks anymore!
 
 ## Key Differences from Other Integrations
 
-Unlike OpenAI Agents and CrewAI which use automatic patching, LangChain requires **explicit callback passing**:
+All three major frameworks now have the same one-line setup:
 
-- **OpenAI Agents**: Automatic via hooks - `chaukas.enable_chaukas()` is enough
-- **CrewAI**: Automatic via event bus - `chaukas.enable_chaukas()` is enough
-- **LangChain**: Requires callback - must pass `callbacks=[callback]` to invoke/run methods
+- **OpenAI Agents**: Automatic via method patching - `chaukas.enable_chaukas()` is enough
+- **CrewAI**: Automatic via event bus hooking - `chaukas.enable_chaukas()` is enough
+- **LangChain**: Automatic via global callback injection - `chaukas.enable_chaukas()` is enough ✨
 
-This is because LangChain uses a callback-based architecture for extensibility.
+Chaukas automatically injects its callback handler into LangChain's global default callbacks, providing the same seamless one-line setup as other frameworks.
+
+### Manual Callback Usage (Optional)
+
+If you need more control or want to use callbacks for specific operations only, you can still get the callback manually:
+
+```python
+import chaukas
+
+chaukas.enable_chaukas()
+callback = chaukas.get_langchain_callback()
+
+# Use only for specific operations
+result = chain.invoke(input, config={"callbacks": [callback]})
+```
 
 ## Viewing Events
 
@@ -129,29 +139,29 @@ Events are sent to your Chaukas dashboard in real-time. You can view:
 
 ## Troubleshooting
 
-### Callback Not Working
+### No Events Appearing
 **Problem**: No events appearing in dashboard
 
-**Solution**: Make sure you're passing the callback to **all** chain/agent invocations:
-```python
-# Correct
-chain.invoke(input, config={"callbacks": [callback]})
+**Solution**: Verify that:
+1. `enable_chaukas()` was called before any LangChain operations
+2. LangChain is properly installed (`pip install langchain langchain-core`)
+3. Your environment variables are set correctly (CHAUKAS_API_KEY, etc.)
 
-# Incorrect - no events will be captured
-chain.invoke(input)
-```
+### LangChain Version Issues
+**Problem**: Auto-instrumentation not working
 
-### Missing Events
-**Problem**: Some events not captured
+**Solution**: Chaukas supports LangChain >= 0.1.0. If you have an older version, either:
+1. Upgrade LangChain: `pip install --upgrade langchain langchain-core`
+2. Use manual callback passing:
+   ```python
+   callback = chaukas.get_langchain_callback()
+   chain.invoke(input, config={"callbacks": [callback]})
+   ```
 
-**Solution**: Ensure callback is passed to **nested** chains too:
-```python
-# For RAG chains, pass callback to the main chain
-rag_chain = {...}
-result = rag_chain.invoke(query, config={"callbacks": [callback]})
+### Events Only for Some Operations
+**Problem**: Some LangChain operations aren't tracked
 
-# The callback will automatically propagate to sub-chains and retrievers
-```
+**Solution**: This is expected - Chaukas tracks the main event types (chains, LLMs, tools, retrievers). If you need custom event tracking, you can extend the callback handler.
 
 ### Import Errors
 **Problem**: `ImportError: No module named 'langchain'`

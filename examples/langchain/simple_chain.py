@@ -1,7 +1,7 @@
 """
 Simple LangChain chain example with Chaukas instrumentation.
 
-This example demonstrates basic LangChain chain usage with Chaukas callback handler.
+This example demonstrates basic LangChain chain usage with automatic Chaukas tracking.
 It captures:
 - SESSION_START/END events
 - MODEL_INVOCATION_START/END events
@@ -15,15 +15,12 @@ from langchain_core.output_parsers import StrOutputParser
 
 import chaukas
 
-# Enable Chaukas instrumentation
+# Enable Chaukas instrumentation (one-line setup - automatically tracks all LangChain operations!)
 chaukas.enable_chaukas()
-
-# Get the callback handler
-callback = chaukas.get_langchain_callback()
 
 
 def main():
-    """Run a simple LangChain chain with Chaukas instrumentation."""
+    """Run a simple LangChain chain with automatic Chaukas instrumentation."""
 
     # Create a simple chain: prompt | llm | output_parser
     prompt = ChatPromptTemplate.from_template("Tell me a joke about {topic}")
@@ -32,13 +29,11 @@ def main():
 
     chain = prompt | llm | output_parser
 
-    # Invoke the chain with Chaukas callback
-    result = chain.invoke(
-        {"topic": "programming"},
-        config={"callbacks": [callback]}
-    )
+    # Invoke the chain - Chaukas automatically tracks everything!
+    result = chain.invoke({"topic": "programming"})
 
     print("Result:", result)
+    print("\n✅ Events automatically sent to Chaukas dashboard")
 
 
 if __name__ == "__main__":

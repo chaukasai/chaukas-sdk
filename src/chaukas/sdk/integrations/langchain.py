@@ -37,12 +37,87 @@ class LangChainWrapper:
         self._session_span_id = None
         self._start_time = None
         self._start_metrics = None
+        self._original_default_callbacks = None
 
     def get_callback_handler(self):
         """Get or create the Chaukas callback handler instance."""
         if self.callback_handler is None:
             self.callback_handler = ChaukasCallbackHandler(self)
         return self.callback_handler
+
+    def auto_instrument(self):
+        """
+        Automatically inject Chaukas callback by patching LangChain's Runnable classes.
+        This enables one-line setup: just call enable_chaukas() and all LangChain
+        operations are automatically instrumented.
+        """
+        try:
+            # Import LangChain's base Runnable
+            try:
+                from langchain_core.runnables import Runnable
+            except ImportError:
+                from langchain.schema.runnable import Runnable
+
+            # Get our callback handler
+            chaukas_callback = self.get_callback_handler()
+
+            # Store original methods
+            self._original_invoke = Runnable.invoke
+            self._original_ainvoke = Runnable.ainvoke if hasattr(Runnable, 'ainvoke') else None
+
+            # Create wrapped invoke method
+            def wrapped_invoke(self_runnable, input, config=None, **kwargs):
+                """Wrapped invoke that automatically includes Chaukas callback."""
+                if config is None:
+                    config = {}
+                if 'callbacks' not in config:
+                    config['callbacks'] = []
+                if chaukas_callback not in config['callbacks']:
+                    config['callbacks'].append(chaukas_callback)
+                return self._original_invoke(self_runnable, input, config=config, **kwargs)
+
+            # Create wrapped async invoke method
+            async def wrapped_ainvoke(self_runnable, input, config=None, **kwargs):
+                """Wrapped async invoke that automatically includes Chaukas callback."""
+                if config is None:
+                    config = {}
+                if 'callbacks' not in config:
+                    config['callbacks'] = []
+                if chaukas_callback not in config['callbacks']:
+                    config['callbacks'].append(chaukas_callback)
+                return await self._original_ainvoke(self_runnable, input, config=config, **kwargs)
+
+            # Patch the methods
+            Runnable.invoke = wrapped_invoke
+            if self._original_ainvoke:
+                Runnable.ainvoke = wrapped_ainvoke
+
+            logger.info("LangChain auto-instrumentation enabled - all operations will be tracked automatically")
+            return True
+
+        except ImportError as e:
+            logger.debug(f"LangChain not installed: {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to auto-instrument LangChain: {e}. You can still use chaukas.get_langchain_callback() manually.")
+            return False
+
+    def remove_auto_instrument(self):
+        """Remove automatic instrumentation by restoring original methods."""
+        try:
+            try:
+                from langchain_core.runnables import Runnable
+            except ImportError:
+                from langchain.schema.runnable import Runnable
+
+            if hasattr(self, '_original_invoke'):
+                Runnable.invoke = self._original_invoke
+            if hasattr(self, '_original_ainvoke') and self._original_ainvoke:
+                Runnable.ainvoke = self._original_ainvoke
+
+            logger.info("LangChain auto-instrumentation removed")
+        except Exception as e:
+            logger.debug(f"Failed to remove auto-instrumentation: {e}")
 
     def _send_event_sync(self, event):
         """Helper to send event from sync context."""

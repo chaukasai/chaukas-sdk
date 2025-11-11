@@ -145,10 +145,13 @@ class MonkeyPatcher:
         wrapper = LangChainWrapper(self.tracer)
         self._wrappers.append(wrapper)  # Store wrapper for cleanup
 
-        # LangChain uses a callback-based approach, so we don't patch methods directly
-        # Instead, users need to pass the callback handler to their chains/agents
-        logger.info("LangChain wrapper initialized. Use chaukas.get_langchain_callback() to get the callback handler")
-        logger.info("Example: chain.invoke(input, config={'callbacks': [chaukas.get_langchain_callback()]})")
+        # Try to auto-instrument by injecting into global callbacks
+        if wrapper.auto_instrument():
+            logger.info("LangChain instrumentation enabled - all operations will be tracked automatically")
+        else:
+            # Fallback: manual callback passing required
+            logger.info("LangChain wrapper initialized. Use chaukas.get_langchain_callback() to manually pass the callback")
+            logger.info("Example: chain.invoke(input, config={'callbacks': [chaukas.get_langchain_callback()]})")
 
     def _add_patch(
         self,
