@@ -339,25 +339,25 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
                 agent_id = str(run_id)
                 agent_name = chain_type
 
-                # Check for agent handoff
-                if self._last_active_agent and self._last_active_agent != (
-                    agent_id,
-                    agent_name,
-                ):
+                # Check for agent handoff (only between different agent types)
+                # Compare only agent_name to avoid false positives from new run_ids
+                if self._last_active_agent:
                     last_id, last_name = self._last_active_agent
-                    handoff_event = self.event_builder.create_agent_handoff(
-                        from_agent_id=last_id,
-                        from_agent_name=last_name,
-                        to_agent_id=agent_id,
-                        to_agent_name=agent_name,
-                        reason="Chain delegation",
-                        handoff_type="sequential",
-                        handoff_data={
-                            "framework": "langchain",
-                            "chain_type": chain_type,
-                        },
-                    )
-                    self.wrapper._send_event_sync(handoff_event)
+                    # Only trigger handoff if switching to a different agent type
+                    if last_name != agent_name:
+                        handoff_event = self.event_builder.create_agent_handoff(
+                            from_agent_id=last_id,
+                            from_agent_name=last_name,
+                            to_agent_id=agent_id,
+                            to_agent_name=agent_name,
+                            reason="Chain delegation",
+                            handoff_type="sequential",
+                            handoff_data={
+                                "framework": "langchain",
+                                "chain_type": chain_type,
+                            },
+                        )
+                        self.wrapper._send_event_sync(handoff_event)
 
                 self._last_active_agent = (agent_id, agent_name)
 
