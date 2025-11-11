@@ -8,10 +8,10 @@ This example demonstrates LangChain tool usage with OpenAI function calling. It 
 - INPUT_RECEIVED/OUTPUT_EMITTED events
 """
 
-from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
 
 from chaukas import sdk as chaukas
 

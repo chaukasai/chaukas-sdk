@@ -3,16 +3,17 @@ Tests for LangChain integration.
 Tests the callback handler implementation for comprehensive event capture.
 """
 
-import pytest
 import asyncio
-from unittest.mock import Mock, MagicMock, patch, AsyncMock, call
-from typing import Dict, Any, List
 import json
+from typing import Any, Dict, List
+from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
-from chaukas.sdk.core.tracer import ChaukasTracer
-from chaukas.sdk.core.client import ChaukasClient
-from chaukas.sdk.integrations.langchain import LangChainWrapper, ChaukasCallbackHandler
+import pytest
 from chaukas.spec.common.v1.events_pb2 import EventStatus, EventType
+
+from chaukas.sdk.core.client import ChaukasClient
+from chaukas.sdk.core.tracer import ChaukasTracer
+from chaukas.sdk.integrations.langchain import ChaukasCallbackHandler, LangChainWrapper
 
 
 @pytest.fixture

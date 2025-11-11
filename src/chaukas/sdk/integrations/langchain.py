@@ -4,11 +4,11 @@ Uses BaseCallbackHandler for comprehensive event capture with ~95% event coverag
 """
 
 import functools
+import json
 import logging
 import time
-from typing import Any, Dict, Optional, List, Union
 from datetime import datetime
-import json
+from typing import Any, Dict, List, Optional, Union
 
 # Optional performance monitoring
 try:
@@ -20,9 +20,9 @@ except ImportError:
 
 from chaukas.spec.common.v1.events_pb2 import EventStatus
 
-from chaukas.sdk.core.tracer import ChaukasTracer
-from chaukas.sdk.core.event_builder import EventBuilder
 from chaukas.sdk.core.agent_mapper import AgentMapper
+from chaukas.sdk.core.event_builder import EventBuilder
+from chaukas.sdk.core.tracer import ChaukasTracer
 
 # Try to import LangChain's BaseCallbackHandler
 try:
