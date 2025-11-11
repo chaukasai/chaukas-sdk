@@ -212,18 +212,12 @@ class LangChainWrapper:
             # We're in an async context, schedule the task
             asyncio.create_task(self.tracer.client.send_event(event))
         except RuntimeError:
-            # No running loop, create a new one and run the coroutine
+            # No running loop - create a temporary one without global manipulation
+            loop = asyncio.new_event_loop()
             try:
-                asyncio.run(self.tracer.client.send_event(event))
-            except RuntimeError:
-                # If asyncio.run fails, try with new event loop
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)  # Set as current loop
-                try:
-                    loop.run_until_complete(self.tracer.client.send_event(event))
-                finally:
-                    asyncio.set_event_loop(None)  # Clean up
-                    loop.close()
+                loop.run_until_complete(self.tracer.client.send_event(event))
+            finally:
+                loop.close()
 
     async def _send_event_async(self, event):
         """Helper to send event from async context."""
