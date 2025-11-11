@@ -199,7 +199,7 @@ class TestChainCallbacks:
                 break
 
         assert error_event is not None
-        assert "Test error" in error_event.error_message
+        assert "Test error" in error_event.error.error_message
 
 
 class TestLLMCallbacks:
@@ -227,7 +227,7 @@ class TestLLMCallbacks:
                 break
 
         assert llm_event is not None
-        assert llm_event.model == "gpt-4"
+        assert llm_event.llm_invocation.model == "gpt-4"
         assert str(run_id) in callback_handler._llm_spans
 
     def test_on_chat_model_start(self, callback_handler, mock_client):
@@ -342,7 +342,7 @@ class TestLLMCallbacks:
 
         assert error_event is not None
         assert llm_end is not None
-        assert "Rate limit exceeded" in error_event.error_message
+        assert "Rate limit exceeded" in error_event.error.error_message
 
 
 class TestToolCallbacks:
@@ -370,7 +370,7 @@ class TestToolCallbacks:
                 break
 
         assert tool_event is not None
-        assert tool_event.tool_name == "calculator"
+        assert tool_event.tool_call.name == "calculator"
 
     def test_on_tool_end(self, callback_handler, mock_client):
         """Test on_tool_end creates TOOL_CALL_END."""
@@ -402,7 +402,7 @@ class TestToolCallbacks:
                 break
 
         assert tool_end is not None
-        assert "3" in tool_end.output
+        assert tool_end.tool_response.output.fields["output"].string_value == "3"
 
     def test_on_tool_error(self, callback_handler, mock_client):
         """Test on_tool_error creates ERROR and TOOL_CALL_END."""
@@ -465,7 +465,7 @@ class TestRetrieverCallbacks:
                 break
 
         assert data_event is not None
-        assert data_event.datasource == "vector_store"
+        assert data_event.data_access.datasource == "vector_store"
 
     def test_on_retriever_end(self, callback_handler, mock_client):
         """Test on_retriever_end creates DATA_ACCESS with results."""
@@ -533,7 +533,7 @@ class TestRetrieverCallbacks:
                 break
 
         assert error_event is not None
-        assert "Retrieval failed" in error_event.error_message
+        assert "Retrieval failed" in error_event.error.error_message
 
 
 class TestAgentCallbacks:
@@ -592,7 +592,7 @@ class TestRetryCallbacks:
                 break
 
         assert retry_event is not None
-        assert retry_event.attempt == 2
+        assert retry_event.retry.attempt == 2
 
     def test_retryable_error_detection(self, callback_handler):
         """Test retryable error detection."""
@@ -666,5 +666,5 @@ class TestAgentHandoff:
                 break
 
         assert handoff_event is not None
-        assert handoff_event.from_agent_id == "agent_1"
-        assert handoff_event.to_agent_id == "agent_2"
+        assert handoff_event.agent_handoff.from_agent_id == "agent_1"
+        assert handoff_event.agent_handoff.to_agent_id == "agent_2"

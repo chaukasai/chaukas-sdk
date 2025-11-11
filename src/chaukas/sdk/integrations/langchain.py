@@ -884,8 +884,7 @@ class ChaukasCallbackHandler:
                 chunk_ids=None,
                 pii_categories=None,
                 agent_id=agent_id,
-                agent_name=agent_name,
-                metadata={"query": query[:500], "run_id": str(run_id)}
+                agent_name=agent_name
             )
             self.wrapper._send_event_sync(data_event)
             self._retriever_spans[str(run_id)] = data_event.span_id
@@ -922,11 +921,7 @@ class ChaukasCallbackHandler:
                 chunk_ids=None,
                 pii_categories=None,
                 agent_id=agent_id,
-                agent_name=agent_name,
-                metadata={
-                    "run_id": run_id_str,
-                    "num_documents": len(documents) if documents else 0
-                }
+                agent_name=agent_name
             )
             self.wrapper._send_event_sync(data_event)
 
