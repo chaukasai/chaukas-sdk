@@ -17,7 +17,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
-import chaukas
+from chaukas import sdk as chaukas
 
 # Enable Chaukas instrumentation (one-line setup!)
 chaukas.enable_chaukas()

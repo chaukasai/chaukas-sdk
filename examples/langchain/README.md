@@ -93,7 +93,7 @@ python multi_chain_workflow.py
 All examples follow the same simple pattern:
 
 ```python
-import chaukas
+from chaukas import sdk as chaukas
 
 # Enable Chaukas instrumentation (one-line setup!)
 chaukas.enable_chaukas()

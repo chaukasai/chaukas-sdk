@@ -13,7 +13,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-import chaukas
+from chaukas import sdk as chaukas
 
 # Enable Chaukas instrumentation (one-line setup!)
 chaukas.enable_chaukas()
