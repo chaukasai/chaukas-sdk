@@ -216,6 +216,6 @@ asyncio.run(main())
 ## Support
 
 For issues or questions:
-- GitHub: https://github.com/anthropics/chaukas-sdk/issues
+- GitHub: https://github.com/chaukasai/chaukas-sdk/issues
 - Documentation: https://docs.chaukas.ai
 - Email: support@chaukas.ai
