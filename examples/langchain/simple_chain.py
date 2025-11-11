@@ -8,7 +8,6 @@ It captures:
 - INPUT_RECEIVED/OUTPUT_EMITTED events
 """
 
-import os
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -33,8 +32,17 @@ def main():
     result = chain.invoke({"topic": "programming"})
 
     print("Result:", result)
-    print("\n✅ Events automatically sent to Chaukas dashboard")
+    print("\n✅ Events captured by Chaukas")
 
 
 if __name__ == "__main__":
+    import time
     main()
+
+    # Give async operations time to complete
+    time.sleep(0.5)
+
+    # Explicitly disable Chaukas to flush events to file
+    chaukas.disable_chaukas()
+
+    print("✅ Events written to file")

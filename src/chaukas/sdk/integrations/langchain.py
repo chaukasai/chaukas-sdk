@@ -23,6 +23,18 @@ from chaukas.sdk.core.tracer import ChaukasTracer
 from chaukas.sdk.core.event_builder import EventBuilder
 from chaukas.sdk.core.agent_mapper import AgentMapper
 
+# Try to import LangChain's BaseCallbackHandler
+try:
+    from langchain_core.callbacks.base import BaseCallbackHandler
+except ImportError:
+    try:
+        from langchain.callbacks.base import BaseCallbackHandler
+    except ImportError:
+        # LangChain not installed, create a dummy base class
+        logger = logging.getLogger(__name__)
+        logger.debug("LangChain not installed, using dummy BaseCallbackHandler")
+        BaseCallbackHandler = object
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,18 +64,28 @@ class LangChainWrapper:
         operations are automatically instrumented.
         """
         try:
-            # Import LangChain's base Runnable
+            # Import LangChain's base Runnable and RunnableSequence
             try:
                 from langchain_core.runnables import Runnable
+                from langchain_core.runnables.base import RunnableSequence
             except ImportError:
-                from langchain.schema.runnable import Runnable
+                try:
+                    from langchain.schema.runnable import Runnable, RunnableSequence
+                except ImportError:
+                    # If RunnableSequence import fails, just use Runnable
+                    from langchain.schema.runnable import Runnable
+                    RunnableSequence = None
 
             # Get our callback handler
             chaukas_callback = self.get_callback_handler()
 
             # Store original methods
-            self._original_invoke = Runnable.invoke
-            self._original_ainvoke = Runnable.ainvoke if hasattr(Runnable, 'ainvoke') else None
+            self._original_runnable_invoke = Runnable.invoke
+            self._original_runnable_ainvoke = Runnable.ainvoke if hasattr(Runnable, 'ainvoke') else None
+
+            if RunnableSequence:
+                self._original_seq_invoke = RunnableSequence.invoke
+                self._original_seq_ainvoke = RunnableSequence.ainvoke if hasattr(RunnableSequence, 'ainvoke') else None
 
             # Create wrapped invoke method
             def wrapped_invoke(self_runnable, input, config=None, **kwargs):
@@ -74,7 +96,12 @@ class LangChainWrapper:
                     config['callbacks'] = []
                 if chaukas_callback not in config['callbacks']:
                     config['callbacks'].append(chaukas_callback)
-                return self._original_invoke(self_runnable, input, config=config, **kwargs)
+
+                # Call the original method
+                if RunnableSequence and isinstance(self_runnable, RunnableSequence):
+                    return self._original_seq_invoke(self_runnable, input, config=config, **kwargs)
+                else:
+                    return self._original_runnable_invoke(self_runnable, input, config=config, **kwargs)
 
             # Create wrapped async invoke method
             async def wrapped_ainvoke(self_runnable, input, config=None, **kwargs):
@@ -85,12 +112,23 @@ class LangChainWrapper:
                     config['callbacks'] = []
                 if chaukas_callback not in config['callbacks']:
                     config['callbacks'].append(chaukas_callback)
-                return await self._original_ainvoke(self_runnable, input, config=config, **kwargs)
+
+                # Call the original method
+                if RunnableSequence and isinstance(self_runnable, RunnableSequence):
+                    return await self._original_seq_ainvoke(self_runnable, input, config=config, **kwargs)
+                else:
+                    return await self._original_runnable_ainvoke(self_runnable, input, config=config, **kwargs)
 
             # Patch the methods
             Runnable.invoke = wrapped_invoke
-            if self._original_ainvoke:
+            if self._original_runnable_ainvoke:
                 Runnable.ainvoke = wrapped_ainvoke
+
+            # Also patch RunnableSequence if available
+            if RunnableSequence:
+                RunnableSequence.invoke = wrapped_invoke
+                if self._original_seq_ainvoke:
+                    RunnableSequence.ainvoke = wrapped_ainvoke
 
             logger.info("LangChain auto-instrumentation enabled - all operations will be tracked automatically")
             return True
@@ -163,7 +201,7 @@ class LangChainWrapper:
             return {}
 
 
-class ChaukasCallbackHandler:
+class ChaukasCallbackHandler(BaseCallbackHandler):
     """
     LangChain BaseCallbackHandler implementation for Chaukas event capture.
 
@@ -178,21 +216,16 @@ class ChaukasCallbackHandler:
     """
 
     def __init__(self, wrapper: LangChainWrapper):
-        """Import BaseCallbackHandler here to avoid requiring langchain at module level."""
-        try:
-            from langchain_core.callbacks.base import BaseCallbackHandler
-            self.BaseCallbackHandler = BaseCallbackHandler
-        except ImportError:
-            try:
-                from langchain.callbacks.base import BaseCallbackHandler
-                self.BaseCallbackHandler = BaseCallbackHandler
-            except ImportError:
-                logger.warning("LangChain not installed, callback handler won't work")
-                self.BaseCallbackHandler = object
+        """Initialize the callback handler."""
+        super().__init__()
 
         self.wrapper = wrapper
         self.event_builder = wrapper.event_builder
         self.tracer = wrapper.tracer
+
+        # Standard LangChain callback handler attributes
+        self.raise_error = False  # Don't raise errors from callbacks
+        self.run_inline = False  # Run callbacks in same thread/process
 
         # Track span IDs for START/END event pairing
         self._chain_spans = {}  # Map chain run_id to span_id
@@ -237,7 +270,11 @@ class ChaukasCallbackHandler:
         try:
             self._start_times[str(run_id)] = time.time()
 
-            chain_type = serialized.get("name", "unknown")
+            # Handle None serialized parameter
+            if serialized is None:
+                chain_type = "unknown"
+            else:
+                chain_type = serialized.get("name", "unknown")
             is_agent_chain = "agent" in chain_type.lower()
             is_root_chain = parent_run_id is None
 
@@ -444,7 +481,7 @@ class ChaukasCallbackHandler:
             self._start_times[str(run_id)] = time.time()
 
             # Extract LLM details
-            model = serialized.get("name", "unknown")
+            model = serialized.get("name", "unknown") if serialized else "unknown"
             provider = self._extract_provider(model)
 
             # Convert prompts to messages format
@@ -485,7 +522,7 @@ class ChaukasCallbackHandler:
             self._start_times[str(run_id)] = time.time()
 
             # Extract model details
-            model = serialized.get("name", "unknown")
+            model = serialized.get("name", "unknown") if serialized else "unknown"
             provider = self._extract_provider(model)
 
             # Flatten and convert messages
@@ -675,7 +712,7 @@ class ChaukasCallbackHandler:
         try:
             self._start_times[str(run_id)] = time.time()
 
-            tool_name = serialized.get("name", "unknown")
+            tool_name = serialized.get("name", "unknown") if serialized else "unknown"
 
             # Parse arguments
             arguments = {}
@@ -873,7 +910,7 @@ class ChaukasCallbackHandler:
         try:
             self._start_times[str(run_id)] = time.time()
 
-            retriever_name = serialized.get("name", "unknown")
+            retriever_name = serialized.get("name", "unknown") if serialized else "unknown"
 
             # Get agent context
             agent_id, agent_name = self._get_current_agent_context()
