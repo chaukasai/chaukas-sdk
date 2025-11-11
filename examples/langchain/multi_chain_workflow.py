@@ -15,11 +15,8 @@ from langchain_core.output_parsers import StrOutputParser
 
 import chaukas
 
-# Enable Chaukas instrumentation
+# Enable Chaukas instrumentation (one-line setup!)
 chaukas.enable_chaukas()
-
-# Get the callback handler
-callback = chaukas.get_langchain_callback()
 
 
 def main():
@@ -45,27 +42,30 @@ def main():
     )
     summary_chain = summary_prompt | llm | StrOutputParser()
 
+    # All chains are automatically tracked by Chaukas!
     print("Step 1: Generating topic...")
-    topic = topic_chain.invoke(
-        {"subject": "artificial intelligence"},
-        config={"callbacks": [callback]}
-    )
+    topic = topic_chain.invoke({"subject": "artificial intelligence"})
     print(f"Topic: {topic}\n")
 
     print("Step 2: Writing about topic...")
-    paragraph = writing_chain.invoke(
-        {"topic": topic},
-        config={"callbacks": [callback]}
-    )
+    paragraph = writing_chain.invoke({"topic": topic})
     print(f"Paragraph: {paragraph}\n")
 
     print("Step 3: Summarizing paragraph...")
-    summary = summary_chain.invoke(
-        {"paragraph": paragraph},
-        config={"callbacks": [callback]}
-    )
+    summary = summary_chain.invoke({"paragraph": paragraph})
     print(f"Summary: {summary}")
+
+    print("\n✅ Events captured by Chaukas")
 
 
 if __name__ == "__main__":
+    import time
     main()
+
+    # Give async operations time to complete
+    time.sleep(0.5)
+
+    # Explicitly disable Chaukas to flush events to file
+    chaukas.disable_chaukas()
+
+    print("✅ Events written to file")

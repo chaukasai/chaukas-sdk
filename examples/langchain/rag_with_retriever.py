@@ -19,11 +19,8 @@ from langchain_core.documents import Document
 
 import chaukas
 
-# Enable Chaukas instrumentation
+# Enable Chaukas instrumentation (one-line setup!)
 chaukas.enable_chaukas()
-
-# Get the callback handler
-callback = chaukas.get_langchain_callback()
 
 
 def main():
@@ -68,15 +65,22 @@ Answer:"""
         | StrOutputParser()
     )
 
-    # Run the chain with Chaukas callback
+    # Run the chain - Chaukas automatically tracks everything!
     print("\nRunning RAG chain...")
-    result = rag_chain.invoke(
-        "What is Chaukas SDK?",
-        config={"callbacks": [callback]}
-    )
+    result = rag_chain.invoke("What is Chaukas SDK?")
 
     print("\nResult:", result)
+    print("\n✅ Events captured by Chaukas")
 
 
 if __name__ == "__main__":
+    import time
     main()
+
+    # Give async operations time to complete
+    time.sleep(0.5)
+
+    # Explicitly disable Chaukas to flush events to file
+    chaukas.disable_chaukas()
+
+    print("✅ Events written to file")

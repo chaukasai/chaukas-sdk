@@ -1,26 +1,22 @@
 """
-LangChain agent with tools example using Chaukas instrumentation.
+LangChain tool calling example using Chaukas instrumentation.
 
-This example demonstrates LangChain agent usage with tools. It captures:
-- AGENT_START/END events
+This example demonstrates LangChain tool usage with OpenAI function calling. It captures:
 - TOOL_CALL_START/END events
 - MODEL_INVOCATION events
-- All standard chain events
+- SESSION_START/END events
+- INPUT_RECEIVED/OUTPUT_EMITTED events
 """
 
-import os
 from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_openai_tools_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
 
 import chaukas
 
-# Enable Chaukas instrumentation
+# Enable Chaukas instrumentation (one-line setup!)
 chaukas.enable_chaukas()
-
-# Get the callback handler
-callback = chaukas.get_langchain_callback()
 
 
 # Define custom tools
@@ -42,35 +38,55 @@ def word_counter(text: str) -> str:
 
 
 def main():
-    """Run a LangChain agent with tools and Chaukas instrumentation."""
+    """Run a LangChain model with tools and Chaukas instrumentation."""
 
-    # Create the LLM
+    # Create the LLM with tools bound
     llm = ChatOpenAI(model="gpt-4", temperature=0)
-
-    # Create tools list
     tools = [calculator, word_counter]
+    llm_with_tools = llm.bind_tools(tools)
 
-    # Create the prompt
+    # Create a prompt template
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are a helpful assistant that can do calculations and count words."),
         ("human", "{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
 
-    # Create the agent
-    agent = create_openai_tools_agent(llm, tools, prompt)
+    # Create the chain
+    chain = prompt | llm_with_tools
 
-    # Create agent executor
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+    # Invoke the chain - Chaukas automatically tracks everything!
+    result = chain.invoke({"input": "What is 25 * 4?"})
 
-    # Run the agent with Chaukas callback
-    result = agent_executor.invoke(
-        {"input": "What is 25 * 4? Also, how many words are in this sentence?"},
-        config={"callbacks": [callback]}
-    )
+    print("\nResult:", result)
+    print("\nTool calls:", result.tool_calls if hasattr(result, 'tool_calls') else "None")
 
-    print("\nFinal Result:", result["output"])
+    # If there are tool calls, execute them
+    if hasattr(result, 'tool_calls') and result.tool_calls:
+        print("\nExecuting tools:")
+        for tool_call in result.tool_calls:
+            tool_name = tool_call['name']
+            tool_args = tool_call['args']
+            print(f"  - {tool_name}({tool_args})")
+
+            # Execute the tool
+            if tool_name == "calculator":
+                tool_result = calculator.invoke(tool_args)
+                print(f"    Result: {tool_result}")
+            elif tool_name == "word_counter":
+                tool_result = word_counter.invoke(tool_args)
+                print(f"    Result: {tool_result}")
+
+    print("\n✅ Events captured by Chaukas")
 
 
 if __name__ == "__main__":
+    import time
     main()
+
+    # Give async operations time to complete
+    time.sleep(0.5)
+
+    # Explicitly disable Chaukas to flush events to file
+    chaukas.disable_chaukas()
+
+    print("✅ Events written to file")
