@@ -87,14 +87,4 @@ Answer:"""
 
 
 if __name__ == "__main__":
-    import time
-
     main()
-
-    # Give async operations time to complete
-    time.sleep(0.5)
-
-    # Explicitly disable Chaukas to flush events to file
-    chaukas.disable_chaukas()
-
-    print("✅ Events written to file")
