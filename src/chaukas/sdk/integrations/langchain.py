@@ -646,9 +646,11 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
             # Get agent context
             agent_id, agent_name = self._get_current_agent_context()
 
+            # Extract model name and provider
+            model_name = kwargs.get("name", "unknown")
             llm_end = self.event_builder.create_model_invocation_end(
-                provider=self._extract_provider(""),
-                model=kwargs.get("name", "unknown"),
+                provider=self._extract_provider(model_name),
+                model=model_name,
                 response_content=response_content,
                 tool_calls=tool_calls,
                 finish_reason=finish_reason,
@@ -709,9 +711,10 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
             self.wrapper._send_event_sync(error_event)
 
             # Emit MODEL_INVOCATION_END with error
+            model_name = kwargs.get("name", "unknown")
             llm_end = self.event_builder.create_model_invocation_end(
-                provider=self._extract_provider(""),
-                model=kwargs.get("name", "unknown"),
+                provider=self._extract_provider(model_name),
+                model=model_name,
                 response_content=None,
                 tool_calls=None,
                 finish_reason="error",
