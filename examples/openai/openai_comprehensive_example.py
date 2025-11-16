@@ -323,7 +323,9 @@ async def error_handling_scenario():
         error_msg = str(e)[:200]
         print(f"  ❌ API Error captured (as expected): {error_type}")
         print(f"     Error: {error_msg}...")
-        print(f"  ✅ ERROR event captured in Chaukas for agent: error_test_agent_invalid_model")
+        print(
+            f"  ✅ ERROR event captured in Chaukas for agent: error_test_agent_invalid_model"
+        )
 
     await asyncio.sleep(1)
 
@@ -341,7 +343,11 @@ async def error_handling_scenario():
         try:
             result = await Runner.run(agent, query)
             if result and result.final_output:
-                output = result.final_output[:100] + "..." if len(result.final_output) > 100 else result.final_output
+                output = (
+                    result.final_output[:100] + "..."
+                    if len(result.final_output) > 100
+                    else result.final_output
+                )
                 print(f"  ✅ Success: {output}")
         except Exception as e:
             error_type = type(e).__name__

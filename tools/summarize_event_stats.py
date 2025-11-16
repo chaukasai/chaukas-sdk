@@ -281,6 +281,7 @@ def summarize_event_stats(
         print(f"❌ Error analyzing events: {e}")
         if verbose:
             import traceback
+
             traceback.print_exc()
         raise
 

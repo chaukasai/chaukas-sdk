@@ -589,7 +589,9 @@ class OpenAIAgentsWrapper:
                     await wrapper.tracer.client.send_event(agent_start)
 
                     # Push agent onto stack for hierarchical tracking
-                    wrapper._agent_stack.append((agent_id, agent_name, agent_start.span_id))
+                    wrapper._agent_stack.append(
+                        (agent_id, agent_name, agent_start.span_id)
+                    )
                 except Exception as e:
                     logger.error(f"Error in on_agent_start hook: {e}")
 
@@ -603,7 +605,11 @@ class OpenAIAgentsWrapper:
 
                     # Find and pop the agent from the stack
                     span_id = None
-                    for i, (stack_agent_id, stack_agent_name, stack_span_id) in enumerate(wrapper._agent_stack):
+                    for i, (
+                        stack_agent_id,
+                        stack_agent_name,
+                        stack_span_id,
+                    ) in enumerate(wrapper._agent_stack):
                         if stack_agent_id == agent_id:
                             span_id = stack_span_id
                             wrapper._agent_stack.pop(i)
@@ -611,7 +617,9 @@ class OpenAIAgentsWrapper:
 
                     # If not found in stack, log warning but continue
                     if span_id is None:
-                        logger.warning(f"Agent {agent_name} not found in stack during on_agent_end")
+                        logger.warning(
+                            f"Agent {agent_name} not found in stack during on_agent_end"
+                        )
                         # Create a new span_id as fallback
                         span_id = wrapper.event_builder._generate_span_id()
 
@@ -680,7 +688,9 @@ class OpenAIAgentsWrapper:
                     model = wrapper._get_model(agent)
 
                     # Extract response details using helper
-                    response_content, tool_calls, finish_reason = wrapper._parse_llm_response(response)
+                    response_content, tool_calls, finish_reason = (
+                        wrapper._parse_llm_response(response)
+                    )
 
                     # Get span_id from context
                     span_id = getattr(context, "_chaukas_llm_span_id", None)
@@ -884,10 +894,9 @@ class OpenAIAgentsWrapper:
                         if hasattr(context, "_chaukas_tool_spans"):
                             # Try to get by tool ID first (from LLM response), then by name
                             tool_id = tool.id if hasattr(tool, "id") else None
-                            span_id = (
-                                context._chaukas_tool_spans.get(tool_id)
-                                or context._chaukas_tool_spans.get(tool_name)
-                            )
+                            span_id = context._chaukas_tool_spans.get(
+                                tool_id
+                            ) or context._chaukas_tool_spans.get(tool_name)
 
                         tool_end = wrapper.event_builder.create_tool_call_end(
                             tool_name=tool_name,
@@ -941,7 +950,11 @@ class OpenAIAgentsWrapper:
                     # Find and emit AGENT_END for the delegating agent
                     # This is necessary because OpenAI SDK doesn't call on_agent_end for agents that delegate
                     from_span_id = None
-                    for i, (stack_agent_id, stack_agent_name, stack_span_id) in enumerate(wrapper._agent_stack):
+                    for i, (
+                        stack_agent_id,
+                        stack_agent_name,
+                        stack_span_id,
+                    ) in enumerate(wrapper._agent_stack):
                         if stack_agent_id == from_id:
                             from_span_id = stack_span_id
                             wrapper._agent_stack.pop(i)
@@ -962,7 +975,9 @@ class OpenAIAgentsWrapper:
                         )
                         await wrapper.tracer.client.send_event(agent_end)
                     else:
-                        logger.warning(f"Could not find agent {from_name} in stack during handoff")
+                        logger.warning(
+                            f"Could not find agent {from_name} in stack during handoff"
+                        )
 
                 except Exception as e:
                     logger.error(f"Error in on_handoff hook: {e}")
@@ -1129,7 +1144,9 @@ class OpenAIAgentsWrapper:
 
         # Pop agent from stack and create AGENT_END event
         span_id = None
-        for i, (stack_agent_id, stack_agent_name, stack_span_id) in enumerate(self._agent_stack):
+        for i, (stack_agent_id, stack_agent_name, stack_span_id) in enumerate(
+            self._agent_stack
+        ):
             if stack_agent_id == agent_id:
                 span_id = stack_span_id
                 self._agent_stack.pop(i)
@@ -1160,7 +1177,9 @@ class OpenAIAgentsWrapper:
         happen invisibly within the HTTP client layer.
         """
         try:
-            policy_event, error_event, agent_end_event = self._create_error_events(error, agent)
+            policy_event, error_event, agent_end_event = self._create_error_events(
+                error, agent
+            )
 
             if policy_event:
                 await self.tracer.client.send_event(policy_event)
@@ -1171,6 +1190,7 @@ class OpenAIAgentsWrapper:
         except Exception as e:
             logger.error(f"Error handling error: {e}")
             import traceback
+
             traceback.print_exc()
 
     def _handle_error_sync(self, error: Exception, agent):
@@ -1182,7 +1202,9 @@ class OpenAIAgentsWrapper:
         happen invisibly within the HTTP client layer.
         """
         try:
-            policy_event, error_event, agent_end_event = self._create_error_events(error, agent)
+            policy_event, error_event, agent_end_event = self._create_error_events(
+                error, agent
+            )
 
             if policy_event:
                 self._send_event_sync(policy_event)
@@ -1228,8 +1250,7 @@ class OpenAIAgentsWrapper:
                         "id": tc.id if hasattr(tc, "id") else None,
                         "name": (
                             tc.function.name
-                            if hasattr(tc, "function")
-                            and hasattr(tc.function, "name")
+                            if hasattr(tc, "function") and hasattr(tc.function, "name")
                             else None
                         ),
                         "arguments": (
@@ -1245,7 +1266,13 @@ class OpenAIAgentsWrapper:
         if hasattr(response, "finish_reason"):
             finish_reason = response.finish_reason
             # Validate against known OpenAI finish_reason values
-            valid_reasons = ["stop", "length", "tool_calls", "content_filter", "function_call"]
+            valid_reasons = [
+                "stop",
+                "length",
+                "tool_calls",
+                "content_filter",
+                "function_call",
+            ]
             if finish_reason and finish_reason not in valid_reasons:
                 logger.warning(f"Unknown finish_reason value: {finish_reason}")
 
@@ -1275,13 +1302,26 @@ class OpenAIAgentsWrapper:
         # Use proper type checking if available
         if OPENAI_TOOLS_AVAILABLE:
             if isinstance(
-                tool, (FileSearchTool, WebSearchTool, CodeInterpreterTool, LocalShellTool, ComputerTool)
+                tool,
+                (
+                    FileSearchTool,
+                    WebSearchTool,
+                    CodeInterpreterTool,
+                    LocalShellTool,
+                    ComputerTool,
+                ),
             ):
                 return True
 
         # Fallback: Check type name for backwards compatibility
         tool_type = type(tool).__name__
-        data_tools = ["FileSearchTool", "WebSearchTool", "CodeInterpreterTool", "LocalShellTool", "ComputerTool"]
+        data_tools = [
+            "FileSearchTool",
+            "WebSearchTool",
+            "CodeInterpreterTool",
+            "LocalShellTool",
+            "ComputerTool",
+        ]
         return any(dt in tool_type for dt in data_tools)
 
     def _get_datasource_name(self, tool) -> str:
