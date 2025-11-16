@@ -23,12 +23,12 @@ except ImportError:
 # OpenAI Agents SDK tool types for proper type checking
 try:
     from agents.tool import (
-        FileSearchTool,
-        WebSearchTool,
         CodeInterpreterTool,
+        ComputerTool,
+        FileSearchTool,
         HostedMCPTool,
         LocalShellTool,
-        ComputerTool,
+        WebSearchTool,
     )
 
     OPENAI_TOOLS_AVAILABLE = True
@@ -45,11 +45,11 @@ except ImportError:
 # OpenAI SDK exception types for proper error handling
 try:
     from openai import (
-        APIError,
-        RateLimitError,
         APIConnectionError,
-        Timeout,
+        APIError,
         AuthenticationError,
+        RateLimitError,
+        Timeout,
     )
 
     OPENAI_EXCEPTIONS_AVAILABLE = True
