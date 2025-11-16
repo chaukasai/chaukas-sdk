@@ -9,22 +9,20 @@ This example showcases:
 - TOOL_CALL_START/END detection
 - MCP_CALL_START/END for Model Context Protocol integration
 - INPUT_RECEIVED/OUTPUT_EMITTED
-- ERROR and RETRY events
+- ERROR events (RETRY events not captured - see error_handling_scenario for details)
 - POLICY_DECISION for content safety
 - DATA_ACCESS for data retrieval tracking
 - STATE_UPDATE for state management
+- SYSTEM events
 
 Requires OPENAI_API_KEY environment variable to be set.
 MCP scenario requires MCP server running (see examples/openai/mcp/prompt-server/).
 """
 
 import asyncio
-import json
 import os
-import random
 import sys
 import time
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -51,6 +49,10 @@ os.environ["CHAUKAS_BATCH_SIZE"] = "1"  # Immediate write for demo
 
 # Import Chaukas SDK
 from chaukas import sdk as chaukas
+
+# Import event analysis tool
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from tools.summarize_event_stats import summarize_event_stats
 
 # Import OpenAI Agents SDK
 try:
@@ -114,26 +116,6 @@ def calculator(expression: str) -> str:
             return f"Error: Invalid characters in expression '{expression}'"
     except Exception as e:
         return f"Error calculating {expression}: {str(e)}"
-
-
-@function_tool
-def weather_api(location: str) -> str:
-    """
-    Get weather information for a location.
-
-    Args:
-        location: City or location name
-
-    Returns:
-        Weather information as a string
-    """
-    # Simulate weather API response
-    weather_conditions = ["Sunny", "Partly Cloudy", "Cloudy", "Light Rain", "Clear"]
-    temp_f = random.randint(60, 85)
-    temp_c = round((temp_f - 32) * 5 / 9)
-    condition = random.choice(weather_conditions)
-
-    return f"Weather in {location}: {condition}, {temp_f}°F ({temp_c}°C), Humidity: {random.randint(40, 70)}%"
 
 
 @function_tool
@@ -291,127 +273,93 @@ async def math_tutor_scenario():
         await asyncio.sleep(0.5)
 
 
-async def travel_planner_scenario():
-    """Scenario 3: Travel Planner with weather and search tools."""
-    print("\n" + "=" * 60)
-    print("Scenario 3: Travel Planner")
-    print("=" * 60)
-
-    # Create travel planner agent
-    agent = Agent(
-        name="travel_planner",
-        instructions="""You are a travel planning assistant. Help users plan their trips.
-        Use the weather_api to check weather conditions.
-        Use web_search to find tourist attractions and travel information.
-        Provide helpful and practical advice.""",
-        model="gpt-4o-mini",
-        tools=[weather_api, web_search, get_current_time],
-    )
-
-    # Multi-turn conversation simulation
-    queries = [
-        "I'm planning a trip to Paris. What's the weather like there?",
-        "What are the top tourist attractions I should visit?",
-        "What's the best time of year to visit?",
-    ]
-
-    print(f"🗺️ Travel planning conversation:")
-
-    for i, query in enumerate(queries, 1):
-        print(f"\n👤 User: {query}")
-
-        # Implement retry logic for demonstration
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                print(f"  Attempt {attempt + 1}/{max_retries}...")
-
-                # Run the agent
-                result = await Runner.run(agent, query)
-
-                if result and result.final_output:
-                    output = (
-                        result.final_output[:200] + "..."
-                        if len(result.final_output) > 200
-                        else result.final_output
-                    )
-                    print(f"  🤖 Assistant: {output}")
-
-                break  # Success, exit retry loop
-
-            except Exception as e:
-                error_msg = str(e)
-                print(f"  ⚠️  Error: {error_msg}")
-
-                if attempt < max_retries - 1:
-                    # Exponential backoff
-                    wait_time = 2**attempt
-                    print(f"  ⏳ Retrying in {wait_time} seconds...")
-                    await asyncio.sleep(wait_time)
-                else:
-                    print(f"  ❌ Max retries exceeded")
-
-        await asyncio.sleep(0.5)
-
-
 async def error_handling_scenario():
-    """Scenario 4: Error handling and recovery demonstration."""
+    """
+    Scenario 3: Error handling demonstration with timeout errors.
+
+    Note: This scenario demonstrates ERROR event capture. RETRY events are NOT
+    captured because the OpenAI SDK performs retries internally (within the HTTP
+    client layer), and we cannot observe these retry attempts from outside the SDK.
+    We only see the final ERROR event after all SDK retries have been exhausted.
+    """
     print("\n" + "=" * 60)
-    print("Scenario 4: Error Handling and Recovery")
+    print("Scenario 3: Error Handling")
     print("=" * 60)
 
     # Create an agent for error testing
     agent = Agent(
         name="error_test_agent",
         instructions="""You are a test agent for demonstrating error handling.
-        Try to use tools when asked.
-        Handle errors gracefully.""",
+        Respond briefly to the user's question.""",
         model="gpt-4o-mini",
-        tools=[web_search, calculator],
+        tools=[],
     )
 
-    test_cases = [
-        "Search for information about error handling in distributed systems",
-        "Calculate the result of 1/0",  # Will cause a calculation error
-        "What happens when an API fails?",
+    # Test: Trigger API errors through Runner.run to capture ERROR events
+    print("\n🧪 Test: Simulating API errors")
+    print("  This demonstrates ERROR event capture")
+    print("  Using invalid model name to trigger API errors")
+
+    print("\n  Making request with invalid model name (will fail)...")
+    print("  → This will trigger an API error from OpenAI")
+    print("  → We'll capture the ERROR event in Chaukas")
+    print("  → NOTE: RETRY events are NOT captured (SDK retries are internal)")
+
+    try:
+        # Create agent with invalid model name
+        error_agent = Agent(
+            name="error_test_agent_invalid_model",
+            instructions="Respond briefly.",
+            model="gpt-99-invalid-model-name",  # This model doesn't exist
+        )
+
+        # Attempt a request that will fail - using Runner.run so error is captured
+        print("  → Calling Runner.run() with invalid model...")
+        result = await Runner.run(error_agent, "Hi")
+        print(f"  ⚠️  Unexpected success (no error occurred)")
+
+    except Exception as e:
+        error_type = type(e).__name__
+        error_msg = str(e)[:200]
+        print(f"  ❌ API Error captured (as expected): {error_type}")
+        print(f"     Error: {error_msg}...")
+        print(f"  ✅ ERROR event captured in Chaukas for agent: error_test_agent_invalid_model")
+
+    await asyncio.sleep(1)
+
+    # Test 2: Normal workflow with proper error handling
+    print("\n🧪 Test 2: Normal error handling workflow")
+    print("  Making regular requests with standard configuration")
+
+    test_queries = [
+        "Say hello",
+        "What is 2+2?",
     ]
 
-    for i, test_query in enumerate(test_cases, 1):
-        print(f"\n🧪 Test {i}: {test_query}")
-
+    for i, query in enumerate(test_queries, 1):
+        print(f"\n  Request {i}: {query}")
         try:
-            # First attempt
-            result = await Runner.run(agent, test_query)
-
+            result = await Runner.run(agent, query)
             if result and result.final_output:
-                output = (
-                    result.final_output[:150] + "..."
-                    if len(result.final_output) > 150
-                    else result.final_output
-                )
+                output = result.final_output[:100] + "..." if len(result.final_output) > 100 else result.final_output
                 print(f"  ✅ Success: {output}")
-
         except Exception as e:
-            print(f"  ❌ Error captured: {e}")
-
-            # Retry once
-            print(f"  ⏳ Retrying after error...")
-            await asyncio.sleep(1)
-
-            try:
-                result = await Runner.run(agent, test_query)
-                print(f"  ✅ Retry successful!")
-
-            except Exception as e2:
-                print(f"  ❌ Retry also failed: {e2}")
+            error_type = type(e).__name__
+            print(f"  ❌ Error: {error_type} - {str(e)[:80]}...")
 
         await asyncio.sleep(0.5)
 
+    print("\n✅ Error handling scenario completed")
+    print("📊 Check event analysis for ERROR events")
+    print("ℹ️  Note: RETRY events are NOT captured because the OpenAI SDK")
+    print("ℹ️  performs retries internally (408, 429, 500+). We only see the")
+    print("ℹ️  final ERROR event after all SDK retries are exhausted.")
+
 
 async def multi_agent_handoff_scenario():
-    """Scenario 5: Multi-agent handoff demonstration using proper handoff mechanism."""
+    """Scenario 4: Multi-agent handoff demonstration using proper handoff mechanism."""
     print("\n" + "=" * 60)
-    print("Scenario 5: Multi-Agent Handoff")
+    print("Scenario 4: Multi-Agent Handoff")
     print("=" * 60)
 
     from agents import handoff
@@ -476,9 +424,9 @@ async def multi_agent_handoff_scenario():
 
 
 async def policy_decision_scenario():
-    """Scenario 6: Policy Decision demonstration with content filtering."""
+    """Scenario 5: Policy Decision demonstration with content filtering."""
     print("\n" + "=" * 60)
-    print("Scenario 6: Policy Decision & Content Safety")
+    print("Scenario 5: Policy Decision & Content Safety")
     print("=" * 60)
 
     from chaukas.sdk.core.event_builder import EventBuilder
@@ -552,9 +500,9 @@ async def policy_decision_scenario():
 
 
 async def data_access_scenario():
-    """Scenario 7: Data Access demonstration with database and document retrieval."""
+    """Scenario 6: Data Access demonstration with database and document retrieval."""
     print("\n" + "=" * 60)
-    print("Scenario 7: Data Access & Retrieval Tracking")
+    print("Scenario 6: Data Access & Retrieval Tracking")
     print("=" * 60)
 
     from chaukas.sdk.core.event_builder import EventBuilder
@@ -637,9 +585,9 @@ async def data_access_scenario():
 
 
 async def mcp_integration_scenario():
-    """Scenario 8: MCP (Model Context Protocol) Integration."""
+    """Scenario 7: MCP (Model Context Protocol) Integration."""
     print("\n" + "=" * 60)
-    print("Scenario 8: MCP Integration")
+    print("Scenario 7: MCP Integration")
     print("=" * 60)
 
     try:
@@ -739,147 +687,6 @@ async def mcp_integration_scenario():
 
 
 # ============================================================================
-# Event Analysis
-# ============================================================================
-
-
-def analyze_events(filename: str):
-    """Analyze captured events from JSONL file."""
-    print("\n" + "=" * 60)
-    print("Event Analysis")
-    print("=" * 60)
-
-    try:
-        with open(filename, "r") as f:
-            events = [json.loads(line) for line in f if line.strip()]
-
-        if not events:
-            print("❌ No events captured")
-            return
-
-        # Count event types
-        event_counts = defaultdict(int)
-        retry_events = []
-        error_events = []
-        tool_calls = []
-
-        for event in events:
-            event_type = event.get("type", "UNKNOWN")
-            event_counts[event_type] += 1
-
-            if event_type == "EVENT_TYPE_RETRY":
-                retry_events.append(event)
-            elif event_type == "EVENT_TYPE_ERROR":
-                error_events.append(event)
-            elif event_type == "EVENT_TYPE_TOOL_CALL_START":
-                tool_calls.append(event)
-
-        # Display summary
-        print(f"\n📊 Total Events Captured: {len(events)}")
-        print("\n📈 Event Distribution:")
-
-        # Sort by count
-        sorted_events = sorted(event_counts.items(), key=lambda x: x[1], reverse=True)
-        for event_type, count in sorted_events:
-            event_name = event_type.replace("EVENT_TYPE_", "")
-            print(f"  {event_name:25} : {count:3} events")
-
-        # Show retry details
-        if retry_events:
-            print(f"\n🔄 Retry Events ({len(retry_events)} total):")
-            for retry in retry_events[:3]:  # Show first 3
-                if "metadata" in retry:
-                    meta = retry["metadata"]
-                    print(
-                        f"  - Attempt {meta.get('attempt', 'N/A')}: {meta.get('retry_reason', 'N/A')[:50]}..."
-                    )
-
-        # Show error details
-        if error_events:
-            print(f"\n❌ Error Events ({len(error_events)} total):")
-            for error in error_events[:3]:  # Show first 3
-                if "error" in error:
-                    err = error["error"]
-                    print(
-                        f"  - {err.get('error_code', 'N/A')}: {err.get('error_message', 'N/A')[:50]}..."
-                    )
-
-        # Show tool calls
-        if tool_calls:
-            print(f"\n🔧 Tool Calls ({len(tool_calls)} total):")
-            tool_names = defaultdict(int)
-            for tc in tool_calls:
-                if "tool_call" in tc:
-                    tool_names[tc["tool_call"].get("tool_name", "unknown")] += 1
-
-            for tool_name, count in tool_names.items():
-                print(f"  - {tool_name}: {count} calls")
-
-        # Check event pairing
-        print("\n🔗 Event Pairing Check:")
-        start_types = [
-            "SESSION_START",
-            "AGENT_START",
-            "MODEL_INVOCATION_START",
-            "TOOL_CALL_START",
-        ]
-
-        for event_base in start_types:
-            start_count = event_counts.get(f"EVENT_TYPE_{event_base}", 0)
-            end_count = event_counts.get(
-                f'EVENT_TYPE_{event_base.replace("START", "END")}', 0
-            )
-
-            if start_count > 0 or end_count > 0:
-                status = "✅" if start_count == end_count else "⚠️"
-                print(
-                    f"  {status} {event_base.replace('_START', ''):20} : {start_count} START, {end_count} END"
-                )
-
-        # Coverage report
-        print("\n📋 Event Coverage Report:")
-        supported_events = [
-            "SESSION_START",
-            "SESSION_END",
-            "AGENT_START",
-            "AGENT_END",
-            "AGENT_HANDOFF",
-            "MODEL_INVOCATION_START",
-            "MODEL_INVOCATION_END",
-            "TOOL_CALL_START",
-            "TOOL_CALL_END",
-            "MCP_CALL_START",
-            "MCP_CALL_END",
-            "INPUT_RECEIVED",
-            "OUTPUT_EMITTED",
-            "ERROR",
-            "RETRY",
-            "POLICY_DECISION",
-            "DATA_ACCESS",
-            "STATE_UPDATE",
-            "SYSTEM",
-        ]
-
-        captured = 0
-        for event in supported_events:
-            if event_counts.get(f"EVENT_TYPE_{event}", 0) > 0:
-                captured += 1
-                print(f"  ✅ {event}")
-            else:
-                print(f"  ❌ {event} (not captured in this run)")
-
-        print(
-            f"\n📊 Coverage: {captured}/{len(supported_events)} supported events captured"
-        )
-        print(f"   ({captured/len(supported_events)*100:.1f}% of supported events)")
-
-    except FileNotFoundError:
-        print(f"❌ Output file '{filename}' not found")
-    except Exception as e:
-        print(f"❌ Error analyzing events: {e}")
-
-
-# ============================================================================
 # Main Program
 # ============================================================================
 
@@ -905,19 +712,18 @@ async def main():
         print("=" * 60)
         print("1. Research Assistant (web search & tools)")
         print("2. Math Tutor (calculator)")
-        print("3. Travel Planner (weather & retries)")
-        print("4. Error Handling Demo")
-        print("5. Multi-Agent Handoff")
-        print("6. Policy Decision & Content Safety")
-        print("7. Data Access & Retrieval Tracking")
-        print("8. MCP Integration (requires MCP server)")
-        print("9. Run All Scenarios")
+        print("3. Error Handling Demo (timeout errors)")
+        print("4. Multi-Agent Handoff")
+        print("5. Policy Decision & Content Safety")
+        print("6. Data Access & Retrieval Tracking")
+        print("7. MCP Integration (requires MCP server)")
+        print("8. Run All Scenarios")
         print("A. Analyze Captured Events")
         print("0. Exit")
         print("-" * 60)
 
         try:
-            choice = input("Enter your choice (0-9, A): ").strip().upper()
+            choice = input("Enter your choice (0-8, A): ").strip().upper()
 
             if choice == "0":
                 break
@@ -926,30 +732,27 @@ async def main():
             elif choice == "2":
                 await math_tutor_scenario()
             elif choice == "3":
-                await travel_planner_scenario()
-            elif choice == "4":
                 await error_handling_scenario()
-            elif choice == "5":
+            elif choice == "4":
                 await multi_agent_handoff_scenario()
-            elif choice == "6":
+            elif choice == "5":
                 await policy_decision_scenario()
-            elif choice == "7":
+            elif choice == "6":
                 await data_access_scenario()
-            elif choice == "8":
+            elif choice == "7":
                 await mcp_integration_scenario()
-            elif choice == "9":
+            elif choice == "8":
                 print("\n🚀 Running all scenarios...")
                 await research_assistant_scenario()
                 await math_tutor_scenario()
-                await travel_planner_scenario()
                 await error_handling_scenario()
                 await multi_agent_handoff_scenario()
                 await policy_decision_scenario()
                 await data_access_scenario()
                 print("\nℹ️  Skipping MCP scenario (requires separate server)")
-                print("   Run scenario 8 separately if MCP server is available")
+                print("   Run scenario 7 separately if MCP server is available")
             elif choice == "A":
-                analyze_events("openai_comprehensive_output.jsonl")
+                summarize_event_stats("openai_comprehensive_output.jsonl")
             else:
                 print("❌ Invalid choice, please try again")
 
@@ -973,7 +776,7 @@ async def main():
     # Final analysis
     print("\n" + "=" * 60)
     print("Final Event Analysis")
-    analyze_events("openai_comprehensive_output.jsonl")
+    summarize_event_stats("openai_comprehensive_output.jsonl")
 
     print("\n✅ Example completed successfully!")
     print("📄 Events saved to: openai_comprehensive_output.jsonl")
