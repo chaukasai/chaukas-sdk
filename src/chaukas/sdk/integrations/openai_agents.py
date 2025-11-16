@@ -3,6 +3,7 @@ OpenAI Agents SDK integration for Chaukas instrumentation.
 Provides 100% event coverage using hooks and monkey patching.
 """
 
+import asyncio
 import functools
 import json
 import logging
@@ -19,6 +20,48 @@ try:
 except ImportError:
     PSUTIL_AVAILABLE = False
 
+# OpenAI Agents SDK tool types for proper type checking
+try:
+    from agents.tool import (
+        CodeInterpreterTool,
+        ComputerTool,
+        FileSearchTool,
+        HostedMCPTool,
+        LocalShellTool,
+        WebSearchTool,
+    )
+
+    OPENAI_TOOLS_AVAILABLE = True
+except ImportError:
+    # Fallback if specific tool types aren't available
+    OPENAI_TOOLS_AVAILABLE = False
+    FileSearchTool = None
+    WebSearchTool = None
+    CodeInterpreterTool = None
+    HostedMCPTool = None
+    LocalShellTool = None
+    ComputerTool = None
+
+# OpenAI SDK exception types for proper error handling
+try:
+    from openai import (
+        APIConnectionError,
+        APIError,
+        AuthenticationError,
+        RateLimitError,
+        Timeout,
+    )
+
+    OPENAI_EXCEPTIONS_AVAILABLE = True
+except ImportError:
+    # Fallback if OpenAI SDK exceptions aren't available
+    OPENAI_EXCEPTIONS_AVAILABLE = False
+    APIError = Exception
+    RateLimitError = Exception
+    APIConnectionError = Exception
+    Timeout = Exception
+    AuthenticationError = Exception
+
 from chaukas.spec.common.v1.events_pb2 import EventStatus
 
 from chaukas.sdk.core.agent_mapper import AgentMapper
@@ -26,6 +69,20 @@ from chaukas.sdk.core.event_builder import EventBuilder
 from chaukas.sdk.core.tracer import ChaukasTracer
 
 logger = logging.getLogger(__name__)
+
+# Constants for OpenAI integration
+FRAMEWORK_NAME = "openai_agents"
+PROVIDER_NAME = "openai"
+MCP_PROTOCOL_VERSION = "1.0"
+
+# Role constants for message formatting
+ROLE_SYSTEM = "system"
+ROLE_USER = "user"
+ROLE_ASSISTANT = "assistant"
+
+# Default values
+DEFAULT_AGENT_NAME = "unnamed_agent"
+DEFAULT_MODEL_NAME = "unknown"
 
 
 class OpenAIAgentsWrapper:
@@ -38,14 +95,10 @@ class OpenAIAgentsWrapper:
         self._session_span_id = None
         self._start_time = None
         self._start_metrics = None
-        self._current_agent_span_id = None
+        self._agent_stack = []  # Stack of (agent_id, agent_name, span_id) tuples
         self._original_runner_run = None
         self._original_runner_run_sync = None
         self._original_runner_run_streamed = None
-        # Track retry attempts
-        self._llm_retry_attempts = {}
-        self._tool_retry_attempts = {}
-        self._agent_retry_attempts = {}
         # MCP patching
         self._original_mcp_get_prompt = None
         self._original_mcp_call_tool = None
@@ -329,7 +382,7 @@ class OpenAIAgentsWrapper:
                     operation="get_prompt",
                     method="get_prompt",
                     request={"prompt_name": name, "arguments": arguments or {}},
-                    protocol_version="1.0",
+                    protocol_version=MCP_PROTOCOL_VERSION,
                 )
                 await wrapper.tracer.client.send_event(mcp_start)
 
@@ -403,7 +456,7 @@ class OpenAIAgentsWrapper:
                     operation="call_tool",
                     method="call_tool",
                     request={"tool_name": tool_name, "arguments": arguments or {}},
-                    protocol_version="1.0",
+                    protocol_version=MCP_PROTOCOL_VERSION,
                 )
                 await wrapper.tracer.client.send_event(mcp_start)
 
@@ -530,11 +583,15 @@ class OpenAIAgentsWrapper:
                         ],
                         metadata={
                             "model": agent.model if hasattr(agent, "model") else None,
-                            "framework": "openai_agents",
+                            "framework": FRAMEWORK_NAME,
                         },
                     )
                     await wrapper.tracer.client.send_event(agent_start)
-                    wrapper._current_agent_span_id = agent_start.span_id
+
+                    # Push agent onto stack for hierarchical tracking
+                    wrapper._agent_stack.append(
+                        (agent_id, agent_name, agent_start.span_id)
+                    )
                 except Exception as e:
                     logger.error(f"Error in on_agent_start hook: {e}")
 
@@ -546,19 +603,35 @@ class OpenAIAgentsWrapper:
                         agent.name if hasattr(agent, "name") else "unnamed_agent"
                     )
 
-                    # Clear retry counter on successful completion
-                    agent_key = f"{agent_id}_{agent.model if hasattr(agent, 'model') else 'unknown'}"
-                    wrapper._agent_retry_attempts.pop(agent_key, None)
+                    # Find and pop the agent from the stack
+                    span_id = None
+                    for i, (
+                        stack_agent_id,
+                        stack_agent_name,
+                        stack_span_id,
+                    ) in enumerate(wrapper._agent_stack):
+                        if stack_agent_id == agent_id:
+                            span_id = stack_span_id
+                            wrapper._agent_stack.pop(i)
+                            break
+
+                    # If not found in stack, log warning but continue
+                    if span_id is None:
+                        logger.warning(
+                            f"Agent {agent_name} not found in stack during on_agent_end"
+                        )
+                        # Create a new span_id as fallback
+                        span_id = wrapper.event_builder._generate_span_id()
 
                     # Send AGENT_END event
                     agent_end = wrapper.event_builder.create_agent_end(
                         agent_id=agent_id,
                         agent_name=agent_name,
                         status=EventStatus.EVENT_STATUS_COMPLETED,
-                        span_id=wrapper._current_agent_span_id,
+                        span_id=span_id,
                         metadata={
                             "output": str(output)[:500] if output else None,
-                            "framework": "openai_agents",
+                            "framework": FRAMEWORK_NAME,
                         },
                     )
                     await wrapper.tracer.client.send_event(agent_end)
@@ -568,15 +641,14 @@ class OpenAIAgentsWrapper:
             async def on_llm_start(self, context, agent, system_prompt, input_items):
                 """Called when an LLM invocation starts."""
                 try:
-                    agent_id = agent.name if hasattr(agent, "name") else str(id(agent))
-                    agent_name = (
-                        agent.name if hasattr(agent, "name") else "unnamed_agent"
-                    )
+                    agent_id = wrapper._get_agent_id(agent)
+                    agent_name = wrapper._get_agent_name(agent)
+                    model = wrapper._get_model(agent)
 
                     # Convert input_items to messages format
                     messages = []
                     if system_prompt:
-                        messages.append({"role": "system", "content": system_prompt})
+                        messages.append({"role": ROLE_SYSTEM, "content": system_prompt})
 
                     for item in input_items:
                         # Handle different item types
@@ -585,12 +657,12 @@ class OpenAIAgentsWrapper:
                                 {"role": item.role, "content": str(item.content)}
                             )
                         else:
-                            messages.append({"role": "user", "content": str(item)})
+                            messages.append({"role": ROLE_USER, "content": str(item)})
 
                     # Send MODEL_INVOCATION_START event
                     llm_start = wrapper.event_builder.create_model_invocation_start(
-                        provider="openai",
-                        model=agent.model if hasattr(agent, "model") else "unknown",
+                        provider=PROVIDER_NAME,
+                        model=model,
                         messages=messages,
                         agent_id=agent_id,
                         agent_name=agent_name,
@@ -611,57 +683,25 @@ class OpenAIAgentsWrapper:
             async def on_llm_end(self, context, agent, response):
                 """Called when an LLM invocation ends."""
                 try:
-                    agent_id = agent.name if hasattr(agent, "name") else str(id(agent))
-                    agent_name = (
-                        agent.name if hasattr(agent, "name") else "unnamed_agent"
+                    agent_id = wrapper._get_agent_id(agent)
+                    agent_name = wrapper._get_agent_name(agent)
+                    model = wrapper._get_model(agent)
+
+                    # Extract response details using helper
+                    response_content, tool_calls, finish_reason = (
+                        wrapper._parse_llm_response(response)
                     )
-
-                    # Clear retry counter on successful completion
-                    model = agent.model if hasattr(agent, "model") else "unknown"
-                    llm_key = f"{agent_id}_{model}_openai"
-                    wrapper._llm_retry_attempts.pop(llm_key, None)
-
-                    # Extract response details
-                    response_content = None
-                    tool_calls = []
-
-                    if hasattr(response, "content"):
-                        response_content = str(response.content)
-
-                    if hasattr(response, "tool_calls") and response.tool_calls:
-                        for tc in response.tool_calls:
-                            tool_calls.append(
-                                {
-                                    "id": tc.id if hasattr(tc, "id") else None,
-                                    "name": (
-                                        tc.function.name
-                                        if hasattr(tc, "function")
-                                        and hasattr(tc.function, "name")
-                                        else None
-                                    ),
-                                    "arguments": (
-                                        tc.function.arguments
-                                        if hasattr(tc, "function")
-                                        and hasattr(tc.function, "arguments")
-                                        else None
-                                    ),
-                                }
-                            )
 
                     # Get span_id from context
                     span_id = getattr(context, "_chaukas_llm_span_id", None)
 
                     # Send MODEL_INVOCATION_END event
                     llm_end = wrapper.event_builder.create_model_invocation_end(
-                        provider="openai",
+                        provider=PROVIDER_NAME,
                         model=model,
                         response_content=response_content,
                         tool_calls=tool_calls if tool_calls else None,
-                        finish_reason=(
-                            response.finish_reason
-                            if hasattr(response, "finish_reason")
-                            else None
-                        ),
+                        finish_reason=finish_reason,
                         prompt_tokens=(
                             response.usage.prompt_tokens
                             if hasattr(response, "usage")
@@ -688,17 +728,14 @@ class OpenAIAgentsWrapper:
                     )
                     await wrapper.tracer.client.send_event(llm_end)
 
-                    # Check for content filtering/moderation (POLICY_DECISION)
+                    # Check for content filtering (POLICY_DECISION)
+                    # Valid OpenAI finish_reason values: 'stop', 'length', 'tool_calls', 'content_filter', 'function_call'
                     finish_reason = (
                         response.finish_reason
                         if hasattr(response, "finish_reason")
                         else None
                     )
-                    if finish_reason in [
-                        "content_filter",
-                        "content_policy",
-                        "moderation",
-                    ]:
+                    if finish_reason == "content_filter":
                         await wrapper._emit_policy_decision(
                             policy_id="openai_content_policy",
                             outcome="blocked",
@@ -767,7 +804,7 @@ class OpenAIAgentsWrapper:
                                 tool.method if hasattr(tool, "method") else "execute"
                             ),
                             request={},
-                            protocol_version="1.0",
+                            protocol_version=MCP_PROTOCOL_VERSION,
                             agent_id=agent_id,
                             agent_name=agent_name,
                         )
@@ -821,10 +858,7 @@ class OpenAIAgentsWrapper:
                         agent.name if hasattr(agent, "name") else "unnamed_agent"
                     )
 
-                    # Clear retry counter on successful completion
                     tool_name = tool.name if hasattr(tool, "name") else str(tool)
-                    tool_key = f"{agent_id}_{tool_name}"
-                    wrapper._tool_retry_attempts.pop(tool_key, None)
 
                     # Check if this is an MCP tool
                     is_mcp = wrapper._is_mcp_tool(tool)
@@ -855,16 +889,14 @@ class OpenAIAgentsWrapper:
                         )
                         await wrapper.tracer.client.send_event(mcp_end)
                     elif not wrapper._is_internal_tool(tool):
-                        # Regular tool
+                        # Regular tool - O(1) dict lookup instead of O(n) loop
                         span_id = None
                         if hasattr(context, "_chaukas_tool_spans"):
                             # Try to get by tool ID first (from LLM response), then by name
-                            for key, value in context._chaukas_tool_spans.items():
-                                if key == tool_name or (
-                                    hasattr(tool, "id") and key == tool.id
-                                ):
-                                    span_id = value
-                                    break
+                            tool_id = tool.id if hasattr(tool, "id") else None
+                            span_id = context._chaukas_tool_spans.get(
+                                tool_id
+                            ) or context._chaukas_tool_spans.get(tool_name)
 
                         tool_end = wrapper.event_builder.create_tool_call_end(
                             tool_name=tool_name,
@@ -911,9 +943,42 @@ class OpenAIAgentsWrapper:
                         to_agent_name=to_name,
                         reason="Agent transfer",
                         handoff_type="direct",
-                        handoff_data={"framework": "openai_agents"},
+                        handoff_data={"framework": FRAMEWORK_NAME},
                     )
                     await wrapper.tracer.client.send_event(handoff_event)
+
+                    # Find and emit AGENT_END for the delegating agent
+                    # This is necessary because OpenAI SDK doesn't call on_agent_end for agents that delegate
+                    from_span_id = None
+                    for i, (
+                        stack_agent_id,
+                        stack_agent_name,
+                        stack_span_id,
+                    ) in enumerate(wrapper._agent_stack):
+                        if stack_agent_id == from_id:
+                            from_span_id = stack_span_id
+                            wrapper._agent_stack.pop(i)
+                            break
+
+                    if from_span_id:
+                        # Emit AGENT_END for the delegating agent
+                        agent_end = wrapper.event_builder.create_agent_end(
+                            agent_id=from_id,
+                            agent_name=from_name,
+                            status=EventStatus.EVENT_STATUS_COMPLETED,
+                            span_id=from_span_id,
+                            metadata={
+                                "handoff_to": to_name,
+                                "framework": FRAMEWORK_NAME,
+                                "reason": "delegated via handoff",
+                            },
+                        )
+                        await wrapper.tracer.client.send_event(agent_end)
+                    else:
+                        logger.warning(
+                            f"Could not find agent {from_name} in stack during handoff"
+                        )
+
                 except Exception as e:
                     logger.error(f"Error in on_handoff hook: {e}")
 
@@ -985,7 +1050,7 @@ class OpenAIAgentsWrapper:
             # Send SESSION_START event
             session_start = self.event_builder.create_session_start(
                 metadata={
-                    "framework": "openai_agents",
+                    "framework": FRAMEWORK_NAME,
                     "agent_name": agent.name if hasattr(agent, "name") else None,
                     "model": agent.model if hasattr(agent, "model") else None,
                 }
@@ -1002,29 +1067,31 @@ class OpenAIAgentsWrapper:
         except Exception as e:
             logger.error(f"Error starting session: {e}")
 
+    def _create_session_end_event(self):
+        """Create SESSION_END event with metrics (shared helper)."""
+        duration_ms = (
+            (time.time() - self._start_time) * 1000 if self._start_time else None
+        )
+        end_metrics = self._get_performance_metrics()
+
+        return self.event_builder.create_session_end(
+            span_id=self._session_span_id,
+            metadata={
+                "framework": FRAMEWORK_NAME,
+                "duration_ms": duration_ms,
+                "cpu_percent": end_metrics.get("cpu_percent"),
+                "memory_mb": end_metrics.get("memory_mb"),
+                "success": True,
+            },
+        )
+
     async def _end_session(self):
         """End the current session (async)."""
         try:
             if not self._session_active:
                 return
 
-            # Calculate performance metrics
-            duration_ms = (
-                (time.time() - self._start_time) * 1000 if self._start_time else None
-            )
-            end_metrics = self._get_performance_metrics()
-
-            # Send SESSION_END event
-            session_end = self.event_builder.create_session_end(
-                span_id=self._session_span_id,
-                metadata={
-                    "framework": "openai_agents",
-                    "duration_ms": duration_ms,
-                    "cpu_percent": end_metrics.get("cpu_percent"),
-                    "memory_mb": end_metrics.get("memory_mb"),
-                    "success": True,
-                },
-            )
+            session_end = self._create_session_end_event()
             await self.tracer.client.send_event(session_end)
 
             self._session_active = False
@@ -1039,23 +1106,7 @@ class OpenAIAgentsWrapper:
             if not self._session_active:
                 return
 
-            # Calculate performance metrics
-            duration_ms = (
-                (time.time() - self._start_time) * 1000 if self._start_time else None
-            )
-            end_metrics = self._get_performance_metrics()
-
-            # Send SESSION_END event
-            session_end = self.event_builder.create_session_end(
-                span_id=self._session_span_id,
-                metadata={
-                    "framework": "openai_agents",
-                    "duration_ms": duration_ms,
-                    "cpu_percent": end_metrics.get("cpu_percent"),
-                    "memory_mb": end_metrics.get("memory_mb"),
-                    "success": True,
-                },
-            )
+            session_end = self._create_session_end_event()
             self._send_event_sync(session_end)
 
             self._session_active = False
@@ -1064,90 +1115,177 @@ class OpenAIAgentsWrapper:
         except Exception as e:
             logger.error(f"Error ending session: {e}")
 
-    async def _handle_error(self, error: Exception, agent):
-        """Handle errors and emit appropriate events (async)."""
-        try:
-            agent_id = agent.name if hasattr(agent, "name") else str(id(agent))
-            agent_name = agent.name if hasattr(agent, "name") else "unnamed_agent"
-            error_msg = str(error)
+    def _create_error_events(self, error: Exception, agent):
+        """Create error-related events (shared helper). Returns tuple of (policy_event, error_event, agent_end_event)."""
+        agent_id = self._get_agent_id(agent)
+        agent_name = self._get_agent_name(agent)
+        error_msg = str(error)
 
-            # Check if this is a retryable error
-            if self._is_retryable_error(error_msg):
-                # Track retry attempt
-                agent_key = f"{agent_id}_{agent.model if hasattr(agent, 'model') else 'unknown'}"
-                retry_count = self._agent_retry_attempts.get(agent_key, 0)
-                self._agent_retry_attempts[agent_key] = retry_count + 1
-
-                # Send RETRY event
-                retry_event = self.event_builder.create_retry(
-                    attempt=retry_count + 1,
-                    strategy="exponential",
-                    backoff_ms=1000 * (2**retry_count),
-                    reason=f"Agent execution failed: {error_msg}",
-                    agent_id=agent_id,
-                    agent_name=agent_name,
-                )
-                await self.tracer.client.send_event(retry_event)
-
-            # Send ERROR event
-            error_event = self.event_builder.create_error(
-                error_message=error_msg,
-                error_code=type(error).__name__,
-                recoverable=self._is_retryable_error(error_msg),
+        # Create POLICY_DECISION event for rate limits
+        policy_event = None
+        if OPENAI_EXCEPTIONS_AVAILABLE and isinstance(error, RateLimitError):
+            policy_event = self.event_builder.create_policy_decision(
+                policy_id="openai_rate_limit",
+                outcome="blocked",
+                rule_ids=["rate_limit"],
+                rationale=f"Request blocked due to rate limit: {error_msg[:100]}",
                 agent_id=agent_id,
                 agent_name=agent_name,
             )
+
+        # Create ERROR event
+        error_event = self.event_builder.create_error(
+            error_message=error_msg,
+            error_code=type(error).__name__,
+            recoverable=False,  # We can't determine this reliably from outside SDK
+            agent_id=agent_id,
+            agent_name=agent_name,
+        )
+
+        # Pop agent from stack and create AGENT_END event
+        span_id = None
+        for i, (stack_agent_id, stack_agent_name, stack_span_id) in enumerate(
+            self._agent_stack
+        ):
+            if stack_agent_id == agent_id:
+                span_id = stack_span_id
+                self._agent_stack.pop(i)
+                break
+
+        agent_end_event = None
+        if span_id:
+            agent_end_event = self.event_builder.create_agent_end(
+                agent_id=agent_id,
+                agent_name=agent_name,
+                status=EventStatus.EVENT_STATUS_FAILED,
+                span_id=span_id,
+                metadata={
+                    "error": error_msg[:200],
+                    "error_type": type(error).__name__,
+                    "framework": FRAMEWORK_NAME,
+                },
+            )
+
+        return policy_event, error_event, agent_end_event
+
+    async def _handle_error(self, error: Exception, agent):
+        """
+        Handle errors and emit ERROR events (async).
+
+        Note: RETRY events are NOT emitted here because we cannot observe
+        OpenAI SDK's internal retry attempts. The SDK retries (408, 429, 500+)
+        happen invisibly within the HTTP client layer.
+        """
+        try:
+            policy_event, error_event, agent_end_event = self._create_error_events(
+                error, agent
+            )
+
+            if policy_event:
+                await self.tracer.client.send_event(policy_event)
             await self.tracer.client.send_event(error_event)
+            if agent_end_event:
+                await self.tracer.client.send_event(agent_end_event)
 
         except Exception as e:
             logger.error(f"Error handling error: {e}")
+            import traceback
+
+            traceback.print_exc()
 
     def _handle_error_sync(self, error: Exception, agent):
-        """Handle errors and emit appropriate events (sync)."""
+        """
+        Handle errors and emit ERROR events (sync).
+
+        Note: RETRY events are NOT emitted here because we cannot observe
+        OpenAI SDK's internal retry attempts. The SDK retries (408, 429, 500+)
+        happen invisibly within the HTTP client layer.
+        """
         try:
-            agent_id = agent.name if hasattr(agent, "name") else str(id(agent))
-            agent_name = agent.name if hasattr(agent, "name") else "unnamed_agent"
-            error_msg = str(error)
-
-            # Check if this is a retryable error
-            if self._is_retryable_error(error_msg):
-                # Track retry attempt
-                agent_key = f"{agent_id}_{agent.model if hasattr(agent, 'model') else 'unknown'}"
-                retry_count = self._agent_retry_attempts.get(agent_key, 0)
-                self._agent_retry_attempts[agent_key] = retry_count + 1
-
-                # Send RETRY event
-                retry_event = self.event_builder.create_retry(
-                    attempt=retry_count + 1,
-                    strategy="exponential",
-                    backoff_ms=1000 * (2**retry_count),
-                    reason=f"Agent execution failed: {error_msg}",
-                    agent_id=agent_id,
-                    agent_name=agent_name,
-                )
-                self._send_event_sync(retry_event)
-
-            # Send ERROR event
-            error_event = self.event_builder.create_error(
-                error_message=error_msg,
-                error_code=type(error).__name__,
-                recoverable=self._is_retryable_error(error_msg),
-                agent_id=agent_id,
-                agent_name=agent_name,
+            policy_event, error_event, agent_end_event = self._create_error_events(
+                error, agent
             )
+
+            if policy_event:
+                self._send_event_sync(policy_event)
             self._send_event_sync(error_event)
+            if agent_end_event:
+                self._send_event_sync(agent_end_event)
 
         except Exception as e:
             logger.error(f"Error handling error: {e}")
+
+    # Helper methods for common attribute access patterns
+    def _get_agent_id(self, agent) -> str:
+        """Extract agent ID from agent object."""
+        return agent.name if hasattr(agent, "name") else str(id(agent))
+
+    def _get_agent_name(self, agent) -> str:
+        """Extract agent name from agent object."""
+        return agent.name if hasattr(agent, "name") else DEFAULT_AGENT_NAME
+
+    def _get_model(self, agent) -> str:
+        """Extract model name from agent object."""
+        return agent.model if hasattr(agent, "model") else DEFAULT_MODEL_NAME
+
+    def _get_tool_name(self, tool) -> str:
+        """Extract tool name from tool object."""
+        return tool.name if hasattr(tool, "name") else str(tool)
+
+    def _parse_llm_response(self, response):
+        """Parse LLM response safely with validation. Returns tuple of (content, tool_calls, finish_reason)."""
+        response_content = None
+        tool_calls = []
+        finish_reason = None
+
+        # Extract content
+        if hasattr(response, "content") and response.content:
+            response_content = str(response.content)
+
+        # Extract tool calls
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            for tc in response.tool_calls:
+                tool_calls.append(
+                    {
+                        "id": tc.id if hasattr(tc, "id") else None,
+                        "name": (
+                            tc.function.name
+                            if hasattr(tc, "function") and hasattr(tc.function, "name")
+                            else None
+                        ),
+                        "arguments": (
+                            tc.function.arguments
+                            if hasattr(tc, "function")
+                            and hasattr(tc.function, "arguments")
+                            else None
+                        ),
+                    }
+                )
+
+        # Extract and validate finish_reason
+        if hasattr(response, "finish_reason"):
+            finish_reason = response.finish_reason
+            # Validate against known OpenAI finish_reason values
+            valid_reasons = [
+                "stop",
+                "length",
+                "tool_calls",
+                "content_filter",
+                "function_call",
+            ]
+            if finish_reason and finish_reason not in valid_reasons:
+                logger.warning(f"Unknown finish_reason value: {finish_reason}")
+
+        return response_content, tool_calls, finish_reason
 
     def _is_mcp_tool(self, tool) -> bool:
         """Check if a tool is an MCP tool."""
-        # Check for HostedMCPTool type
-        tool_type = type(tool).__name__
-        if "MCP" in tool_type or "mcp" in tool_type:
-            return True
+        # Use proper type checking if available
+        if OPENAI_TOOLS_AVAILABLE and HostedMCPTool is not None:
+            if isinstance(tool, HostedMCPTool):
+                return True
 
-        # Check for MCP-related attributes
+        # Fallback: Check for MCP-related attributes for backwards compatibility
         if hasattr(tool, "server_url") or hasattr(tool, "protocol"):
             return True
 
@@ -1161,12 +1299,47 @@ class OpenAIAgentsWrapper:
 
     def _is_data_access_tool(self, tool) -> bool:
         """Check if a tool involves data access."""
+        # Use proper type checking if available
+        if OPENAI_TOOLS_AVAILABLE:
+            if isinstance(
+                tool,
+                (
+                    FileSearchTool,
+                    WebSearchTool,
+                    CodeInterpreterTool,
+                    LocalShellTool,
+                    ComputerTool,
+                ),
+            ):
+                return True
+
+        # Fallback: Check type name for backwards compatibility
         tool_type = type(tool).__name__
-        data_tools = ["FileSearchTool", "WebSearchTool", "CodeInterpreterTool"]
+        data_tools = [
+            "FileSearchTool",
+            "WebSearchTool",
+            "CodeInterpreterTool",
+            "LocalShellTool",
+            "ComputerTool",
+        ]
         return any(dt in tool_type for dt in data_tools)
 
     def _get_datasource_name(self, tool) -> str:
         """Get the datasource name for a data access tool."""
+        # Use proper type checking if available
+        if OPENAI_TOOLS_AVAILABLE:
+            if isinstance(tool, FileSearchTool):
+                return "file_search"
+            elif isinstance(tool, WebSearchTool):
+                return "web_search"
+            elif isinstance(tool, CodeInterpreterTool):
+                return "code_interpreter"
+            elif isinstance(tool, LocalShellTool):
+                return "local_shell"
+            elif isinstance(tool, ComputerTool):
+                return "computer"
+
+        # Fallback: Check type name for backwards compatibility
         tool_type = type(tool).__name__
         if "FileSearch" in tool_type:
             return "file_search"
@@ -1174,29 +1347,15 @@ class OpenAIAgentsWrapper:
             return "web_search"
         elif "CodeInterpreter" in tool_type:
             return "code_interpreter"
+        elif "LocalShell" in tool_type:
+            return "local_shell"
+        elif "Computer" in tool_type:
+            return "computer"
         else:
             return "unknown"
 
-    def _is_retryable_error(self, error_msg: str) -> bool:
-        """Check if an error is retryable."""
-        retryable_patterns = [
-            "rate limit",
-            "timeout",
-            "connection",
-            "temporary",
-            "503",
-            "429",
-            "network",
-            "unavailable",
-        ]
-
-        error_lower = error_msg.lower()
-        return any(pattern in error_lower for pattern in retryable_patterns)
-
     def _send_event_sync(self, event):
         """Helper to send event from sync context."""
-        import asyncio
-
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -1256,7 +1415,7 @@ class OpenAIAgentsWrapper:
             system_event = self.event_builder.create_system_event(
                 message=message,
                 severity=severity,
-                metadata={"framework": "openai_agents"},
+                metadata={"framework": FRAMEWORK_NAME},
             )
             self._send_event_sync(system_event)
         except Exception as e:
@@ -1285,7 +1444,7 @@ class OpenAIAgentsWrapper:
             system_event = self.event_builder.create_system_event(
                 message=message,
                 severity=severity,
-                metadata={"framework": "openai_agents"},
+                metadata={"framework": FRAMEWORK_NAME},
                 agent_id=agent_id,
                 agent_name=agent_name,
             )

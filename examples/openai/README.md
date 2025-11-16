@@ -42,16 +42,14 @@ Minimal example - perfect for getting started.
 Interactive menu with 8 scenarios demonstrating all event types:
 1. Research Assistant (web search & tools)
 2. Math Tutor (calculator)
-3. Travel Planner (weather & retries)
-4. Error Handling Demo
-5. Multi-Agent Handoff
-6. Policy Decision & Content Safety
-7. Data Access & Retrieval Tracking
-8. MCP Integration (requires MCP server)
+3. Error Handling Demo (timeout errors)
+4. Multi-Agent Handoff
+5. Policy Decision & Content Safety
+6. Data Access & Retrieval Tracking
+7. MCP Integration (requires MCP server)
 
 ### Other Examples
 - `openai_tools_example.py` - Tool calling patterns
-- `openai_retry_example.py` - Retry and error recovery
 - `openai_handoff_message_filter.py` - Agent handoffs with message filtering
 - `openai_sqllite_session_example.py` - Session persistence with SQLite
 
@@ -98,7 +96,7 @@ pip install "openai-agents>=0.5.0,<1.0.0" chaukas-sdk
 
 ## Event Coverage
 
-The comprehensive example captures **17/19 event types (89%)**:
+The comprehensive example captures **18/19 event types (94.7%)**:
 
 ✅ Captured:
 - SESSION_START/END
@@ -112,10 +110,10 @@ The comprehensive example captures **17/19 event types (89%)**:
 - STATE_UPDATE
 - POLICY_DECISION
 - DATA_ACCESS
+- SYSTEM
 
-❌ Not captured:
-- RETRY (requires real API failures)
-- SYSTEM (system-level events)
+❌ Not Captured:
+- **RETRY** - OpenAI SDK performs retries internally within the HTTP client layer. These retry attempts are invisible to external observers, so we cannot emit RETRY events. We only see the final ERROR event after all SDK retries are exhausted.
 
 ## MCP Integration
 

@@ -56,12 +56,10 @@ Requires OPENAI_API_KEY environment variable to be set.
 """
 
 import asyncio
-import json
 import os
 import random
 import sys
 import time
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
@@ -83,6 +81,10 @@ os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
 
 # Import Chaukas SDK
 from chaukas import sdk as chaukas
+
+# Import event analysis tool
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from tools.summarize_event_stats import summarize_event_stats
 
 # Import CrewAI
 try:
@@ -683,204 +685,6 @@ def complex_workflow_scenario():
 
 
 # ============================================================================
-# Event Analysis
-# ============================================================================
-
-
-def analyze_events(filename: str):
-    """Analyze captured events from JSONL file."""
-    print("\n" + "=" * 60)
-    print("CrewAI Event Analysis")
-    print("=" * 60)
-
-    try:
-        with open(filename, "r") as f:
-            events = [json.loads(line) for line in f if line.strip()]
-
-        if not events:
-            print("❌ No events captured")
-            return
-
-        # Count event types
-        event_counts = defaultdict(int)
-        agent_events = defaultdict(list)
-        tool_calls = defaultdict(int)
-        handoffs = []
-        retries = []
-        errors = []
-        mcp_calls = []
-        data_access = []
-        policy_decisions = []
-        state_updates = []
-
-        for event in events:
-            event_type = event.get("type", "UNKNOWN")
-            event_counts[event_type] += 1
-
-            # Categorize events
-            if event_type == "EVENT_TYPE_AGENT_START":
-                agent_name = event.get("agent_name", "unknown")
-                agent_events[agent_name].append("START")
-            elif event_type == "EVENT_TYPE_AGENT_END":
-                agent_name = event.get("agent_name", "unknown")
-                agent_events[agent_name].append("END")
-            elif event_type == "EVENT_TYPE_TOOL_CALL_START":
-                if "tool_call" in event:
-                    tool_name = event["tool_call"].get("tool_name", "unknown")
-                    tool_calls[tool_name] += 1
-            elif event_type == "EVENT_TYPE_AGENT_HANDOFF":
-                handoffs.append(event)
-            elif event_type == "EVENT_TYPE_RETRY":
-                retries.append(event)
-            elif event_type == "EVENT_TYPE_ERROR":
-                errors.append(event)
-            elif event_type == "EVENT_TYPE_MCP_CALL_START":
-                mcp_calls.append(event)
-            elif event_type == "EVENT_TYPE_DATA_ACCESS":
-                data_access.append(event)
-            elif event_type == "EVENT_TYPE_POLICY_DECISION":
-                policy_decisions.append(event)
-            elif event_type == "EVENT_TYPE_STATE_UPDATE":
-                state_updates.append(event)
-
-        # Display summary
-        print(f"\n📊 Total Events Captured: {len(events)}")
-        print("\n📈 Event Type Distribution:")
-
-        # All 19 event types that CrewAI supports
-        all_event_types = [
-            "SESSION_START",
-            "SESSION_END",
-            "AGENT_START",
-            "AGENT_END",
-            "AGENT_HANDOFF",
-            "MODEL_INVOCATION_START",
-            "MODEL_INVOCATION_END",
-            "TOOL_CALL_START",
-            "TOOL_CALL_END",
-            "MCP_CALL_START",
-            "MCP_CALL_END",
-            "INPUT_RECEIVED",
-            "OUTPUT_EMITTED",
-            "ERROR",
-            "RETRY",
-            "POLICY_DECISION",
-            "DATA_ACCESS",
-            "STATE_UPDATE",
-            "SYSTEM",
-        ]
-
-        for event_type in all_event_types:
-            count = event_counts.get(f"EVENT_TYPE_{event_type}", 0)
-            status = "✅" if count > 0 else "⭕"
-            print(f"  {status} {event_type:25} : {count:3} events")
-
-        # Agent activity
-        print(f"\n👥 Agent Activity:")
-        for agent_name, activities in agent_events.items():
-            starts = activities.count("START")
-            ends = activities.count("END")
-            status = "✅" if starts == ends else "⚠️"
-            print(f"  {status} {agent_name:20} : {starts} starts, {ends} ends")
-
-        # Tool usage
-        if tool_calls:
-            print(f"\n🔧 Tool Usage:")
-            for tool_name, count in sorted(
-                tool_calls.items(), key=lambda x: x[1], reverse=True
-            ):
-                print(f"  - {tool_name:20} : {count} calls")
-
-        # Agent handoffs
-        if handoffs:
-            print(f"\n🤝 Agent Handoffs: {len(handoffs)}")
-            for handoff in handoffs[:3]:
-                if "agent_handoff" in handoff:
-                    h = handoff["agent_handoff"]
-                    print(
-                        f"  - {h.get('from_agent_name', 'N/A')} → {h.get('to_agent_name', 'N/A')}"
-                    )
-
-        # MCP calls
-        if mcp_calls:
-            print(f"\n🔌 MCP Context Calls: {len(mcp_calls)}")
-            for mcp in mcp_calls[:3]:
-                if "mcp_call" in mcp:
-                    m = mcp["mcp_call"]
-                    print(
-                        f"  - {m.get('operation', 'N/A')} from {m.get('server_name', 'N/A')}"
-                    )
-
-        # Data access
-        if data_access:
-            print(f"\n📚 Data Access Events: {len(data_access)}")
-            for da in data_access[:3]:
-                if "data_access" in da:
-                    d = da["data_access"]
-                    print(
-                        f"  - {d.get('data_source', 'N/A')}: {d.get('query', 'N/A')[:50]}..."
-                    )
-
-        # Policy decisions
-        if policy_decisions:
-            print(f"\n⚖️ Policy Decisions: {len(policy_decisions)}")
-            for pd in policy_decisions[:3]:
-                if "policy_decision" in pd:
-                    p = pd["policy_decision"]
-                    print(
-                        f"  - {p.get('policy_name', 'N/A')}: {p.get('decision', 'N/A')}"
-                    )
-
-        # State updates
-        if state_updates:
-            print(f"\n💾 State Updates: {len(state_updates)}")
-            for su in state_updates[:3]:
-                if "state_update" in su:
-                    s = su["state_update"]
-                    print(
-                        f"  - {s.get('state_key', 'N/A')}: {s.get('old_value', 'N/A')} → {s.get('new_value', 'N/A')}"
-                    )
-
-        # Errors and retries
-        if errors:
-            print(f"\n❌ Errors: {len(errors)}")
-            for error in errors[:3]:
-                if "error" in error:
-                    e = error["error"]
-                    print(
-                        f"  - {e.get('error_code', 'N/A')}: {e.get('error_message', 'N/A')[:50]}..."
-                    )
-
-        if retries:
-            print(f"\n🔄 Retries: {len(retries)}")
-            for retry in retries[:3]:
-                if "retry" in retry:
-                    r = retry["retry"]
-                    print(
-                        f"  - Attempt {r.get('attempt', 'N/A')}: {r.get('reason', 'N/A')[:50]}..."
-                    )
-
-        # Coverage calculation
-        captured_types = sum(
-            1 for et in all_event_types if event_counts.get(f"EVENT_TYPE_{et}", 0) > 0
-        )
-        coverage_percent = (captured_types / len(all_event_types)) * 100
-
-        print(
-            f"\n📋 Event Coverage: {captured_types}/{len(all_event_types)} types captured ({coverage_percent:.1f}%)"
-        )
-        print("   CrewAI supports 100% of Chaukas event types! 🎉")
-
-    except FileNotFoundError:
-        print(f"❌ Output file '{filename}' not found")
-    except Exception as e:
-        print(f"❌ Error analyzing events: {e}")
-        import traceback
-
-        traceback.print_exc()
-
-
-# ============================================================================
 # Main Program
 # ============================================================================
 
@@ -938,7 +742,7 @@ def main():
                 error_retry_scenario()
                 complex_workflow_scenario()
             elif choice == "7":
-                analyze_events("crewai_comprehensive_output.jsonl")
+                summarize_event_stats("crewai_comprehensive_output.jsonl")
             else:
                 print("❌ Invalid choice, please try again")
 
@@ -962,7 +766,7 @@ def main():
     # Final analysis
     print("\n" + "=" * 60)
     print("Final Event Analysis")
-    analyze_events("crewai_comprehensive_output.jsonl")
+    summarize_event_stats("crewai_comprehensive_output.jsonl")
 
     print("\n✅ Example completed successfully!")
     print("📄 Events saved to: crewai_comprehensive_output.jsonl")

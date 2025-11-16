@@ -5,6 +5,52 @@ All notable changes to the Chaukas SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - TBD
+
+### Added
+
+- **LangChain** (`langchain-core>=0.1.0`) - **19/19 events** (100% coverage)
+  - Full event capture for LangChain chains, agents, and tools
+  - Support for LCEL (LangChain Expression Language) pipelines
+  - Automatic retry detection and tracking
+  - Examples: basic chains, agents with tools, LCEL pipelines
+  - Production ready
+
+### Changed
+
+- **OpenAI Agents** - Event coverage updated to **18/19 events** (94.7%)
+  - RETRY events are not supported for OpenAI Agents SDK
+  - Reason: OpenAI SDK performs retries internally within its HTTP client layer, making retry attempts invisible to external instrumentation
+  - All other event types fully supported including ERROR events (captured after SDK retries are exhausted)
+  - Removed retry-related examples from OpenAI documentation
+
+### Fixed
+
+- **OpenAI Agents** - Type safety improvements
+  - Replaced fragile string comparisons with proper `isinstance()` type checking
+  - Added imports for OpenAI tool types: `FileSearchTool`, `WebSearchTool`, `CodeInterpreterTool`, `HostedMCPTool`, `LocalShellTool`, `ComputerTool`
+  - Added imports for OpenAI exception types: `APIError`, `RateLimitError`, `APIConnectionError`, `Timeout`, `AuthenticationError`
+  - Fixed undefined variable bug in `on_llm_end` hook
+  - Fixed invalid `finish_reason` values (removed non-existent 'content_policy' and 'moderation' checks)
+
+- **OpenAI Agents** - Code quality improvements
+  - Reduced code duplication (~48 lines removed, 24% reduction)
+  - Created helper methods for attribute access (`_get_agent_id`, `_get_agent_name`, `_get_model`, etc.)
+  - Consolidated async/sync method pairs with shared helpers
+  - Improved tool span lookup from O(n) to O(1) performance
+  - Added `_parse_llm_response()` for safe response validation
+  - Moved `asyncio` import to module level for better performance
+
+- **OpenAI Agents** - Enhanced data access tracking
+  - Added support for `LocalShellTool` (datasource: "local_shell")
+  - Added support for `ComputerTool` (datasource: "computer")
+  - Now tracks 5 data access tool types (previously 3)
+
+- **OpenAI Agents** - Error handling improvements
+  - Fixed ERROR events not being emitted in error scenarios
+  - Added AGENT_END events (FAILED status) when errors occur
+  - Improved agent stack management for proper cleanup on errors
+
 ## [0.1.0] - 2025-11-09
 
 ### Added

@@ -35,7 +35,7 @@ result = await agent.run(messages=[...])
 
 **Instantly get:**
 - 🎯 Complete execution traces with distributed tracing
-- 🔄 Automatic retry detection and tracking
+- 🔄 Automatic retry detection and tracking (CrewAI, LangChain)
 - 🛠️ Tool call monitoring and performance metrics
 - 🤝 Multi-agent handoff visualization
 - 🚨 Error tracking with full context
@@ -106,10 +106,12 @@ result = await agent.run(
 # ✅ Agent lifecycle
 # ✅ LLM invocations with tokens
 # ✅ Tool calls and results
-# ✅ Errors and retries
+# ✅ Errors (18/19 event types - RETRY not supported, see below)
 # ✅ Policy decisions
 # ✅ State changes
 ```
+
+> **Note:** OpenAI Agents SDK captures **18/19 event types (94.7%)**. RETRY events cannot be captured because the OpenAI SDK performs retries internally within its HTTP client layer, making them invisible to external instrumentation. All other frameworks (CrewAI, LangChain) support full 19/19 event coverage including RETRY detection.
 
 #### CrewAI
 
