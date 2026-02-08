@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/Users/siddharth/dev/chaukas/chaukas-sdk/.venv/bin/black:*)"
+    ]
+  }
+}

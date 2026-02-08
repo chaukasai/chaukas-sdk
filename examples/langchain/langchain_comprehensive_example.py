@@ -114,6 +114,7 @@ USE_LANGGRAPH = False
 
 try:
     from langgraph.prebuilt import create_react_agent
+
     AGENTS_AVAILABLE = True
     USE_LANGGRAPH = True
 except ImportError:
@@ -122,6 +123,7 @@ except ImportError:
 if not AGENTS_AVAILABLE:
     try:
         from langchain.agents import AgentExecutor, create_tool_calling_agent
+
         AGENTS_AVAILABLE = True
         USE_LANGGRAPH = False
     except ImportError:
@@ -136,11 +138,14 @@ if not AGENTS_AVAILABLE:
 try:
     from langchain_community.vectorstores import FAISS
     from langchain.text_splitter import RecursiveCharacterTextSplitter
+
     FAISS_AVAILABLE = True
 except ImportError:
     FAISS_AVAILABLE = False
     print("Warning: langchain-community or faiss-cpu not installed")
-    print("RAG scenario will be skipped. Install with: pip install langchain-community faiss-cpu")
+    print(
+        "RAG scenario will be skipped. Install with: pip install langchain-community faiss-cpu"
+    )
 
 # Optional imports for custom events
 try:
@@ -227,7 +232,11 @@ def scenario_simple_chain():
         print(f"\nTopic: {topic}")
         try:
             result = chain.invoke({"topic": topic})
-            print(f"Result: {result[:150]}..." if len(result) > 150 else f"Result: {result}")
+            print(
+                f"Result: {result[:150]}..."
+                if len(result) > 150
+                else f"Result: {result}"
+            )
         except Exception as e:
             print(f"Error: {e}")
 
@@ -275,10 +284,18 @@ def scenario_agent_tools():
                 # Extract the last message content
                 if "messages" in result and result["messages"]:
                     last_msg = result["messages"][-1]
-                    output = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+                    output = (
+                        last_msg.content
+                        if hasattr(last_msg, "content")
+                        else str(last_msg)
+                    )
                 else:
                     output = str(result)
-                print(f"Result: {output[:150]}..." if len(output) > 150 else f"Result: {output}")
+                print(
+                    f"Result: {output[:150]}..."
+                    if len(output) > 150
+                    else f"Result: {output}"
+                )
             except Exception as e:
                 print(f"Error: {e}")
     else:
@@ -298,7 +315,11 @@ def scenario_agent_tools():
             try:
                 result = agent_executor.invoke({"input": query})
                 output = result.get("output", str(result))
-                print(f"Result: {output[:150]}..." if len(output) > 150 else f"Result: {output}")
+                print(
+                    f"Result: {output[:150]}..."
+                    if len(output) > 150
+                    else f"Result: {output}"
+                )
             except Exception as e:
                 print(f"Error: {e}")
 
@@ -384,7 +405,11 @@ Answer:"""
         print(f"\nQuestion: {question}")
         try:
             result = rag_chain.invoke(question)
-            print(f"Answer: {result[:150]}..." if len(result) > 150 else f"Answer: {result}")
+            print(
+                f"Answer: {result[:150]}..."
+                if len(result) > 150
+                else f"Answer: {result}"
+            )
         except Exception as e:
             print(f"Error: {e}")
 
@@ -556,23 +581,37 @@ def scenario_mcp_tools():
             )
             if "messages" in result and result["messages"]:
                 last_msg = result["messages"][-1]
-                output = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+                output = (
+                    last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+                )
             else:
                 output = str(result)
-            print(f"Result: {output[:150]}..." if len(output) > 150 else f"Result: {output}")
+            print(
+                f"Result: {output[:150]}..."
+                if len(output) > 150
+                else f"Result: {output}"
+            )
         except Exception as e:
             print(f"Error: {e}")
 
         # Without MCP metadata - triggers regular TOOL_CALL events
         print("\nWithout MCP metadata (TOOL_CALL events):")
         try:
-            result = agent.invoke({"messages": [("human", "Tell me about MCP protocol.")]})
+            result = agent.invoke(
+                {"messages": [("human", "Tell me about MCP protocol.")]}
+            )
             if "messages" in result and result["messages"]:
                 last_msg = result["messages"][-1]
-                output = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+                output = (
+                    last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+                )
             else:
                 output = str(result)
-            print(f"Result: {output[:150]}..." if len(output) > 150 else f"Result: {output}")
+            print(
+                f"Result: {output[:150]}..."
+                if len(output) > 150
+                else f"Result: {output}"
+            )
         except Exception as e:
             print(f"Error: {e}")
     else:
@@ -603,7 +642,11 @@ def scenario_mcp_tools():
                 },
             )
             output = result.get("output", str(result))
-            print(f"Result: {output[:150]}..." if len(output) > 150 else f"Result: {output}")
+            print(
+                f"Result: {output[:150]}..."
+                if len(output) > 150
+                else f"Result: {output}"
+            )
         except Exception as e:
             print(f"Error: {e}")
 
@@ -612,7 +655,11 @@ def scenario_mcp_tools():
         try:
             result = agent_executor.invoke({"input": "Tell me about MCP protocol."})
             output = result.get("output", str(result))
-            print(f"Result: {output[:150]}..." if len(output) > 150 else f"Result: {output}")
+            print(
+                f"Result: {output[:150]}..."
+                if len(output) > 150
+                else f"Result: {output}"
+            )
         except Exception as e:
             print(f"Error: {e}")
 
@@ -656,20 +703,31 @@ def scenario_error_handling():
         # New langgraph-based agent (langchain >= 1.0)
         agent = create_react_agent(llm, tools)
         try:
-            result = agent.invoke({"messages": [("human", "Use the failing_tool with query 'test'")]})
+            result = agent.invoke(
+                {"messages": [("human", "Use the failing_tool with query 'test'")]}
+            )
             if "messages" in result and result["messages"]:
                 last_msg = result["messages"][-1]
-                output = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+                output = (
+                    last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+                )
             else:
                 output = str(result)
-            print(f"Result: {output[:150]}..." if len(output) > 150 else f"Result: {output}")
+            print(
+                f"Result: {output[:150]}..."
+                if len(output) > 150
+                else f"Result: {output}"
+            )
         except Exception as e:
             print(f"Caught error (expected): {type(e).__name__}: {str(e)[:100]}")
     else:
         # Legacy AgentExecutor (langchain < 1.0)
         prompt = ChatPromptTemplate.from_messages(
             [
-                ("system", "You are a helpful assistant. Try using the failing_tool first."),
+                (
+                    "system",
+                    "You are a helpful assistant. Try using the failing_tool first.",
+                ),
                 ("human", "{input}"),
                 ("placeholder", "{agent_scratchpad}"),
             ]
@@ -684,9 +742,15 @@ def scenario_error_handling():
         )
 
         try:
-            result = agent_executor.invoke({"input": "Use the failing_tool with query 'test'"})
+            result = agent_executor.invoke(
+                {"input": "Use the failing_tool with query 'test'"}
+            )
             output = result.get("output", str(result))
-            print(f"Result: {output[:150]}..." if len(output) > 150 else f"Result: {output}")
+            print(
+                f"Result: {output[:150]}..."
+                if len(output) > 150
+                else f"Result: {output}"
+            )
         except Exception as e:
             print(f"Caught error (expected): {type(e).__name__}: {str(e)[:100]}")
 

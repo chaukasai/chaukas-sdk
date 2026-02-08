@@ -1021,9 +1021,11 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
             # Emit TOOL_CALL_START event for the agent's tool selection
             tool_start = self.event_builder.create_tool_call_start(
                 tool_name=tool,
-                arguments=tool_input
-                if isinstance(tool_input, dict)
-                else {"input": str(tool_input)},
+                arguments=(
+                    tool_input
+                    if isinstance(tool_input, dict)
+                    else {"input": str(tool_input)}
+                ),
                 call_id=action_run_id,
                 agent_id=agent_id,
                 agent_name=agent_name,

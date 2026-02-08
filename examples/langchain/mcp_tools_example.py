@@ -43,6 +43,7 @@ from langchain_core.output_parsers import StrOutputParser
 USE_LANGGRAPH = False
 try:
     from langgraph.prebuilt import create_react_agent
+
     USE_LANGGRAPH = True
 except ImportError:
     try:
@@ -153,7 +154,11 @@ def main():
         print("-" * 50)
 
         result = agent.invoke(
-            {"messages": [("human", "What is LangChain and how does it relate to AI agents?")]},
+            {
+                "messages": [
+                    ("human", "What is LangChain and how does it relate to AI agents?")
+                ]
+            },
             config={
                 "metadata": {
                     "mcp_server": "knowledge-server",
