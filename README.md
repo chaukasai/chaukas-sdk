@@ -180,6 +180,9 @@ result = chain.invoke({"topic": "programming"})
 # ✅ LLM invocations with tokens
 # ✅ Tool calls (if using agents)
 # ✅ RAG operations (retriever tracking)
+# ✅ MCP tool calls (with mcp_server metadata)
+# ✅ Streaming text output
+# ✅ Custom events (SYSTEM)
 # ✅ Errors and retries
 ```
 
@@ -191,10 +194,10 @@ Chaukas SDK implements the **[chaukas-spec](https://github.com/chaukasai/chaukas
 |-----------|---------|--------|--------|-------|
 | **[OpenAI Agents](https://github.com/openai/openai-agents-python)** | `>=0.5.0,<1.0.0` | 🎉 **18/19** | 🟢 Production | Session mgmt, MCP protocol, policy tracking, state updates, errors |
 | **[CrewAI](https://github.com/crewAIInc/crewAI)** | `>=1.4.1,<2.0.0` | 🎉 **19/19** | 🟢 Production | Event bus integration, multi-agent handoffs, knowledge sources, guardrails, flows |
-| **[LangChain](https://github.com/langchain-ai/langchain)** | `>=0.1.0,<2.0` | 🎉 **18/19** | 🟢 Production | Runnable method patching, chains, agents, tools, RAG, retriever tracking |
+| **[LangChain](https://github.com/langchain-ai/langchain)** / **[LangGraph](https://github.com/langchain-ai/langgraph)** | `>=0.1.0,<2.0` | 🎉 **17/19** | 🟢 Production | Runnable patching, chains, agents, tools, RAG, MCP, streaming, custom events. LangGraph works via LangChain integration. **Note:** LangChain 1.x requires Python ≥3.10 |
 | **[Google ADK](https://github.com/google/adk-python)** | Latest | 🚧 **5/19** | 🟡 Under Construction | Basic agent & LLM tracking |
 
-**Coming Soon**: LangGraph, AutoGen, Microsoft Semantic Kernel
+**Coming Soon**: AutoGen, Microsoft Semantic Kernel
 
 *All frameworks implementing the complete [chaukas-spec](https://github.com/chaukasai/chaukas-spec) capture all 19 event types*
 

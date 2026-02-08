@@ -196,3 +196,6 @@ CLAUDE.md
 # Output and debug files
 *.jsonl
 *.dbg
+
+# Example output directories
+examples/*/output/

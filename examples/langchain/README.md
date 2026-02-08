@@ -1,20 +1,35 @@
-# LangChain Examples with Chaukas Instrumentation
+# LangChain / LangGraph Examples with Chaukas Instrumentation
 
-This directory contains examples demonstrating how to use Chaukas SDK with LangChain for comprehensive observability.
+This directory contains examples demonstrating how to use Chaukas SDK with LangChain and LangGraph for comprehensive observability.
+
+> **Note:** LangGraph uses the same integration as LangChain - no separate setup needed. LangGraph is built on LangChain's `Runnable` interface, so when you call `enable_chaukas()`, both LangChain chains and LangGraph graphs are automatically instrumented.
 
 ## Event Coverage
 
-LangChain integration with Chaukas provides ~95% event coverage, capturing:
+LangChain integration with Chaukas provides **17/19 event coverage (89%)**, capturing:
 
 - **SESSION_START/END** - Root chain lifecycle
 - **AGENT_START/END** - Agent chain execution
 - **MODEL_INVOCATION_START/END** - LLM/chat model calls
 - **TOOL_CALL_START/END** - Tool execution
+- **MCP_CALL_START/END** - MCP protocol tool calls (when `mcp_server` metadata is present)
 - **DATA_ACCESS** - Retriever/vector store queries
-- **INPUT_RECEIVED/OUTPUT_EMITTED** - I/O tracking
+- **INPUT_RECEIVED/OUTPUT_EMITTED** - I/O tracking (including streaming via `on_text`)
 - **ERROR** - Error handling
 - **RETRY** - Retry detection
 - **AGENT_HANDOFF** - Multi-agent workflows
+- **SYSTEM** - Custom events (via `on_custom_event`)
+
+## Supported Versions
+
+| Package | Supported Versions |
+|---------|-------------------|
+| `langchain` | `>=0.1.0,<2.0` |
+| `langchain-core` | `>=0.1.0,<2.0` |
+| `langchain-openai` | `>=0.0.1,<2.0` |
+| `langchain-community` | `>=0.0.1,<2.0` |
+
+**Python Version Note:** LangChain 1.x requires Python ≥3.10. LangChain 0.x supports Python ≥3.9.
 
 ## Setup
 
@@ -33,6 +48,43 @@ export CHAUKAS_PROJECT_ID="your-project-id"
 ```
 
 ## Examples
+
+### Comprehensive Example (Recommended)
+
+**`langchain_comprehensive_example.py`** - Interactive example demonstrating all 17 event types.
+
+This is the best way to explore Chaukas + LangChain integration. It includes:
+- 7 scenarios covering all supported event types
+- Interactive menu to run individual scenarios
+- Built-in event analysis to see what was captured
+- `--all` flag to run all scenarios at once
+
+**Usage:**
+```bash
+# Interactive menu
+python langchain_comprehensive_example.py
+
+# Run all scenarios
+python langchain_comprehensive_example.py --all
+
+# Show help
+python langchain_comprehensive_example.py --help
+```
+
+**Scenarios:**
+1. Simple Chain (SESSION, MODEL_INVOCATION, I/O)
+2. Agent with Tools (TOOL_CALL, AGENT)
+3. RAG Retriever (DATA_ACCESS)
+4. Streaming Output (OUTPUT_EMITTED)
+5. Custom Events (SYSTEM)
+6. MCP Tools (MCP_CALL)
+7. Error Handling (ERROR, RETRY)
+
+---
+
+### Focused Examples
+
+The following examples focus on specific features. Use these for quick reference on individual topics.
 
 ### 1. Simple Chain (`simple_chain.py`)
 Basic LangChain chain with prompt → LLM → parser pattern.
@@ -86,6 +138,55 @@ Complex workflow with multiple sequential chains.
 **Usage:**
 ```bash
 python multi_chain_workflow.py
+```
+
+### 5. Streaming Output (`streaming_example.py`)
+Real-time streaming with text chunk capture via `on_text` callback.
+
+**Key Events Captured:**
+- OUTPUT_EMITTED (multiple events, one per text chunk)
+- MODEL_INVOCATION_START/END
+- SESSION_START/END
+
+**Usage:**
+```bash
+python streaming_example.py
+```
+
+### 6. Custom Events (`custom_events_example.py`)
+Application-specific custom event tracking using `dispatch_custom_event`.
+
+**Key Events Captured:**
+- SYSTEM events (via `on_custom_event` callback)
+- Custom severity levels (debug, info, warn, error)
+- Application-specific metadata
+
+**Usage:**
+```bash
+python custom_events_example.py
+```
+
+**Note:** `dispatch_custom_event` must be called from within a Runnable context (e.g., inside a `RunnableLambda` function).
+
+### 7. MCP Tools (`mcp_tools_example.py`)
+Model Context Protocol tool integration with server metadata.
+
+**Key Events Captured:**
+- MCP_CALL_START/END (when `mcp_server` metadata is present)
+- Protocol version and server tracking
+- Server name and URL metadata
+
+**Usage:**
+```bash
+python mcp_tools_example.py
+```
+
+**Note:** To trigger MCP events, include `mcp_server` in the config metadata:
+```python
+result = chain.invoke(
+    {"input": "..."},
+    config={"metadata": {"mcp_server": "server-name", "mcp_server_url": "mcp://..."}}
+)
 ```
 
 ## Usage Pattern
@@ -158,6 +259,24 @@ Events are sent to your Chaukas dashboard in real-time. You can view:
    chain.invoke(input, config={"callbacks": [callback]})
    ```
 
+### Python Version Requirements
+**Problem**: Installation fails or import errors with LangChain 1.x
+
+**Solution**: LangChain 1.x requires Python ≥3.10. Check your Python version:
+```bash
+python --version
+```
+
+| LangChain Version | Python Requirement |
+|-------------------|-------------------|
+| 0.1.x - 0.3.x | Python ≥3.9 |
+| 1.x (1.0.0+) | Python ≥3.10 |
+
+If you're on Python 3.9, you'll need to use LangChain 0.x versions:
+```bash
+pip install "langchain>=0.1.0,<1.0"
+```
+
 ### Events Only for Some Operations
 **Problem**: Some LangChain operations aren't tracked
 
@@ -190,6 +309,7 @@ def search_database(query: str) -> str:
 ### Streaming Support
 ```python
 # Streaming is supported - events are captured during streaming
+# The on_text callback emits OUTPUT_EMITTED events for streamed text chunks
 for chunk in chain.stream(input, config={"callbacks": [callback]}):
     print(chunk, end="", flush=True)
 ```

@@ -29,9 +29,23 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
+# Get script directory for consistent file paths
+SCRIPT_DIR = Path(__file__).parent.resolve()
+OUTPUT_DIR = SCRIPT_DIR / "output"
+
 # Load .env from the same directory as this script
-script_dir = Path(__file__).parent
-load_dotenv(script_dir / ".env")
+load_dotenv(SCRIPT_DIR / ".env")
+
+# Create output directory if it doesn't exist
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+# Get base name from env (without extension), construct timestamped path
+# .env should have: CHAUKAS_OUTPUT_FILE=openai_output (no extension)
+OUTPUT_BASE = os.environ.get("CHAUKAS_OUTPUT_FILE", "openai_output")
+# Strip any extension if accidentally provided
+OUTPUT_BASE = OUTPUT_BASE.rsplit(".", 1)[0] if "." in OUTPUT_BASE else OUTPUT_BASE
+TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+OUTPUT_FILE = str(OUTPUT_DIR / f"{OUTPUT_BASE}_{TIMESTAMP}.jsonl")
 
 # Check for API key before proceeding
 if not os.environ.get("OPENAI_API_KEY"):
@@ -44,7 +58,7 @@ if not os.environ.get("OPENAI_API_KEY"):
 os.environ["CHAUKAS_TENANT_ID"] = "demo_tenant"
 os.environ["CHAUKAS_PROJECT_ID"] = "openai_comprehensive_demo"
 os.environ["CHAUKAS_OUTPUT_MODE"] = "file"
-os.environ["CHAUKAS_OUTPUT_FILE"] = "openai_comprehensive_output.jsonl"
+os.environ["CHAUKAS_OUTPUT_FILE"] = OUTPUT_FILE
 os.environ["CHAUKAS_BATCH_SIZE"] = "1"  # Immediate write for demo
 
 # Import Chaukas SDK
@@ -758,7 +772,7 @@ async def main():
                 print("\nℹ️  Skipping MCP scenario (requires separate server)")
                 print("   Run scenario 7 separately if MCP server is available")
             elif choice == "A":
-                summarize_event_stats("openai_comprehensive_output.jsonl")
+                summarize_event_stats(OUTPUT_FILE)
             else:
                 print("❌ Invalid choice, please try again")
 
@@ -782,10 +796,10 @@ async def main():
     # Final analysis
     print("\n" + "=" * 60)
     print("Final Event Analysis")
-    summarize_event_stats("openai_comprehensive_output.jsonl")
+    summarize_event_stats(OUTPUT_FILE)
 
     print("\n✅ Example completed successfully!")
-    print("📄 Events saved to: openai_comprehensive_output.jsonl")
+    print(f"📄 Events saved to: {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":
