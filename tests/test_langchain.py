@@ -615,3 +615,316 @@ class TestAgentHandoff:
         assert handoff_event is not None
         assert handoff_event.agent_handoff.from_agent_id == "agent_1"
         assert handoff_event.agent_handoff.to_agent_id == "agent_2"
+
+
+class TestMCPCallbacks:
+    """Tests for MCP tool detection and event emission."""
+
+    def test_on_tool_start_mcp_detection(self, callback_handler, mock_client):
+        """Test on_tool_start detects MCP tools and emits MCP_CALL_START."""
+        serialized = {"name": "fetch_weather"}
+        input_str = '{"city": "London"}'
+        run_id = "mcp_tool_123"
+        metadata = {
+            "mcp_server": "weather-server",
+            "mcp_server_url": "https://mcp.example.com/weather",
+        }
+
+        callback_handler.on_tool_start(
+            serialized=serialized,
+            input_str=input_str,
+            run_id=run_id,
+            parent_run_id=None,
+            metadata=metadata,
+        )
+
+        # Verify MCP_CALL_START was emitted (not TOOL_CALL_START)
+        mcp_event = None
+        for event in mock_client.sent_events:
+            if event.type == EventType.EVENT_TYPE_MCP_CALL_START:
+                mcp_event = event
+                break
+
+        assert mcp_event is not None
+        assert mcp_event.mcp_call.server_name == "weather-server"
+        assert str(run_id) in callback_handler._mcp_runs
+
+    def test_on_tool_start_regular_tool(self, callback_handler, mock_client):
+        """Test on_tool_start emits TOOL_CALL_START for non-MCP tools."""
+        serialized = {"name": "calculator"}
+        input_str = '{"operation": "add"}'
+        run_id = "tool_456"
+
+        callback_handler.on_tool_start(
+            serialized=serialized,
+            input_str=input_str,
+            run_id=run_id,
+            parent_run_id=None,
+            metadata=None,  # No MCP metadata
+        )
+
+        # Verify TOOL_CALL_START was emitted
+        tool_event = None
+        for event in mock_client.sent_events:
+            if event.type == EventType.EVENT_TYPE_TOOL_CALL_START:
+                tool_event = event
+                break
+
+        assert tool_event is not None
+        assert str(run_id) not in callback_handler._mcp_runs
+
+    def test_on_tool_end_mcp(self, callback_handler, mock_client):
+        """Test on_tool_end emits MCP_CALL_END for MCP tools."""
+        run_id = "mcp_tool_123"
+
+        # First start an MCP tool
+        callback_handler.on_tool_start(
+            serialized={"name": "fetch_data"},
+            input_str="{}",
+            run_id=run_id,
+            parent_run_id=None,
+            metadata={"mcp_server": "data-server"},
+        )
+        mock_client.sent_events.clear()
+
+        # End the tool
+        callback_handler.on_tool_end(
+            output={"result": "success"},
+            run_id=run_id,
+            parent_run_id=None,
+            name="fetch_data",
+        )
+
+        # Verify MCP_CALL_END was emitted
+        mcp_end = None
+        for event in mock_client.sent_events:
+            if event.type == EventType.EVENT_TYPE_MCP_CALL_END:
+                mcp_end = event
+                break
+
+        assert mcp_end is not None
+        assert str(run_id) not in callback_handler._mcp_runs
+
+    def test_on_tool_error_mcp(self, callback_handler, mock_client):
+        """Test on_tool_error emits MCP_CALL_END with error for MCP tools."""
+        run_id = "mcp_tool_789"
+
+        # First start an MCP tool
+        callback_handler.on_tool_start(
+            serialized={"name": "fetch_data"},
+            input_str="{}",
+            run_id=run_id,
+            parent_run_id=None,
+            metadata={"mcp_server": "data-server"},
+        )
+        mock_client.sent_events.clear()
+
+        # Error in tool
+        error = Exception("MCP server unavailable")
+        callback_handler.on_tool_error(
+            error=error,
+            run_id=run_id,
+            parent_run_id=None,
+            name="fetch_data",
+        )
+
+        # Verify ERROR and MCP_CALL_END were emitted
+        error_event = None
+        mcp_end = None
+        for event in mock_client.sent_events:
+            if event.type == EventType.EVENT_TYPE_ERROR:
+                error_event = event
+            elif event.type == EventType.EVENT_TYPE_MCP_CALL_END:
+                mcp_end = event
+
+        assert error_event is not None
+        assert mcp_end is not None
+        assert str(run_id) not in callback_handler._mcp_runs
+
+
+class TestTextCallbacks:
+    """Tests for streaming text callbacks."""
+
+    def test_on_text_emits_output(self, callback_handler, mock_client):
+        """Test on_text creates OUTPUT_EMITTED event."""
+        callback_handler.on_text(
+            text="Hello, streaming world!",
+            run_id="stream_123",
+            parent_run_id=None,
+        )
+
+        # Verify OUTPUT_EMITTED was emitted
+        output_event = None
+        for event in mock_client.sent_events:
+            if event.type == EventType.EVENT_TYPE_OUTPUT_EMITTED:
+                output_event = event
+                break
+
+        assert output_event is not None
+        assert output_event.message.text == "Hello, streaming world!"
+
+    def test_on_text_skips_empty(self, callback_handler, mock_client):
+        """Test on_text skips empty text."""
+        callback_handler.on_text(
+            text="",
+            run_id="stream_456",
+            parent_run_id=None,
+        )
+
+        # Verify no event was emitted
+        output_events = [
+            e
+            for e in mock_client.sent_events
+            if e.type == EventType.EVENT_TYPE_OUTPUT_EMITTED
+        ]
+        assert len(output_events) == 0
+
+    def test_on_text_skips_whitespace_only(self, callback_handler, mock_client):
+        """Test on_text skips whitespace-only text."""
+        callback_handler.on_text(
+            text="   \n\t  ",
+            run_id="stream_789",
+            parent_run_id=None,
+        )
+
+        # Verify no event was emitted
+        output_events = [
+            e
+            for e in mock_client.sent_events
+            if e.type == EventType.EVENT_TYPE_OUTPUT_EMITTED
+        ]
+        assert len(output_events) == 0
+
+    def test_on_text_truncates_long_content(self, callback_handler, mock_client):
+        """Test on_text truncates content over 1000 chars."""
+        long_text = "x" * 2000
+        callback_handler.on_text(
+            text=long_text,
+            run_id="stream_long",
+            parent_run_id=None,
+        )
+
+        output_event = None
+        for event in mock_client.sent_events:
+            if event.type == EventType.EVENT_TYPE_OUTPUT_EMITTED:
+                output_event = event
+                break
+
+        assert output_event is not None
+        assert len(output_event.message.text) == 1000
+
+
+class TestCustomEventCallbacks:
+    """Tests for custom event callbacks."""
+
+    def test_on_custom_event_basic(self, callback_handler, mock_client):
+        """Test on_custom_event creates SYSTEM event."""
+        callback_handler.on_custom_event(
+            name="user_feedback",
+            data={"rating": 5, "comment": "Great!"},
+            run_id="custom_123",
+            tags=["feedback"],
+            metadata=None,
+        )
+
+        # Verify SYSTEM event was emitted
+        system_event = None
+        for event in mock_client.sent_events:
+            if event.type == EventType.EVENT_TYPE_SYSTEM:
+                system_event = event
+                break
+
+        assert system_event is not None
+
+    def test_on_custom_event_with_severity(self, callback_handler, mock_client):
+        """Test on_custom_event respects severity in metadata."""
+        from chaukas.spec.common.v1.events_pb2 import Severity
+
+        callback_handler.on_custom_event(
+            name="performance_warning",
+            data={"latency_ms": 5000},
+            run_id="custom_456",
+            metadata={"severity": "warn"},
+        )
+
+        system_event = None
+        for event in mock_client.sent_events:
+            if event.type == EventType.EVENT_TYPE_SYSTEM:
+                system_event = event
+                break
+
+        assert system_event is not None
+        assert system_event.severity == Severity.SEVERITY_WARN
+
+    def test_on_custom_event_with_string_data(self, callback_handler, mock_client):
+        """Test on_custom_event handles string data."""
+        callback_handler.on_custom_event(
+            name="debug_info",
+            data="This is a debug message",
+            run_id="custom_789",
+        )
+
+        system_event = None
+        for event in mock_client.sent_events:
+            if event.type == EventType.EVENT_TYPE_SYSTEM:
+                system_event = event
+                break
+
+        assert system_event is not None
+
+
+class TestAgentActionCallback:
+    """Tests for agent action callback emitting TOOL_CALL_START."""
+
+    def test_on_agent_action_emits_tool_start(self, callback_handler, mock_client):
+        """Test on_agent_action emits TOOL_CALL_START."""
+
+        # Mock action object
+        class MockAgentAction:
+            def __init__(self):
+                self.tool = "search_web"
+                self.tool_input = {"query": "langchain documentation"}
+
+        action = MockAgentAction()
+
+        callback_handler.on_agent_action(
+            action=action,
+            run_id="agent_action_123",
+            parent_run_id=None,
+        )
+
+        # Verify TOOL_CALL_START was emitted
+        tool_event = None
+        for event in mock_client.sent_events:
+            if event.type == EventType.EVENT_TYPE_TOOL_CALL_START:
+                tool_event = event
+                break
+
+        assert tool_event is not None
+        assert tool_event.tool_call.name == "search_web"
+
+    def test_on_agent_action_with_string_input(self, callback_handler, mock_client):
+        """Test on_agent_action handles string tool_input."""
+
+        class MockAgentAction:
+            def __init__(self):
+                self.tool = "calculator"
+                self.tool_input = "2 + 2"
+
+        action = MockAgentAction()
+
+        callback_handler.on_agent_action(
+            action=action,
+            run_id="agent_action_456",
+            parent_run_id=None,
+        )
+
+        # Verify TOOL_CALL_START was emitted
+        tool_event = None
+        for event in mock_client.sent_events:
+            if event.type == EventType.EVENT_TYPE_TOOL_CALL_START:
+                tool_event = event
+                break
+
+        assert tool_event is not None
+        assert tool_event.tool_call.name == "calculator"

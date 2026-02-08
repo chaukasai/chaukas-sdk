@@ -66,9 +66,23 @@ from typing import Any, Dict, List, Optional, Type
 
 from dotenv import load_dotenv
 
+# Get script directory for consistent file paths
+SCRIPT_DIR = Path(__file__).parent.resolve()
+OUTPUT_DIR = SCRIPT_DIR / "output"
+
 # Load .env from the same directory as this script
-script_dir = Path(__file__).parent
-load_dotenv(script_dir / ".env")
+load_dotenv(SCRIPT_DIR / ".env")
+
+# Create output directory if it doesn't exist
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+# Get base name from env (without extension), construct timestamped path
+# .env should have: CHAUKAS_OUTPUT_FILE=crewai_output (no extension)
+OUTPUT_BASE = os.environ.get("CHAUKAS_OUTPUT_FILE", "crewai_output")
+# Strip any extension if accidentally provided
+OUTPUT_BASE = OUTPUT_BASE.rsplit(".", 1)[0] if "." in OUTPUT_BASE else OUTPUT_BASE
+TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+OUTPUT_FILE = str(OUTPUT_DIR / f"{OUTPUT_BASE}_{TIMESTAMP}.jsonl")
 
 # Check for API key before proceeding
 if not os.environ.get("OPENAI_API_KEY"):
@@ -79,11 +93,16 @@ if not os.environ.get("OPENAI_API_KEY"):
 # Disable CrewAI's own telemetry
 os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
 
+# Set up Chaukas output file
+os.environ["CHAUKAS_OUTPUT_MODE"] = "file"
+os.environ["CHAUKAS_OUTPUT_FILE"] = OUTPUT_FILE
+os.environ.setdefault("CHAUKAS_BATCH_SIZE", "1")  # Immediate writes for demo
+
 # Import Chaukas SDK
 from chaukas import sdk as chaukas
 
 # Import event analysis tool
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(SCRIPT_DIR.parent.parent))
 from tools.summarize_event_stats import summarize_event_stats
 
 # Import CrewAI
@@ -742,7 +761,7 @@ def main():
                 error_retry_scenario()
                 complex_workflow_scenario()
             elif choice == "7":
-                summarize_event_stats("crewai_comprehensive_output.jsonl")
+                summarize_event_stats(OUTPUT_FILE)
             else:
                 print("❌ Invalid choice, please try again")
 
@@ -766,10 +785,10 @@ def main():
     # Final analysis
     print("\n" + "=" * 60)
     print("Final Event Analysis")
-    summarize_event_stats("crewai_comprehensive_output.jsonl")
+    summarize_event_stats(OUTPUT_FILE)
 
     print("\n✅ Example completed successfully!")
-    print("📄 Events saved to: crewai_comprehensive_output.jsonl")
+    print(f"📄 Events saved to: {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":

@@ -9,12 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **LangChain** (`langchain-core>=0.1.0`) - **19/19 events** (100% coverage)
+- **LangChain** (`langchain>=0.1.0,<2.0`) - **17/19 events** (~95% coverage)
   - Full event capture for LangChain chains, agents, and tools
   - Support for LCEL (LangChain Expression Language) pipelines
   - Automatic retry detection and tracking
-  - Examples: basic chains, agents with tools, LCEL pipelines
+  - MCP protocol support (via `mcp_server` metadata)
+  - Streaming output capture (via `on_text` callback)
+  - Custom events (via `on_custom_event` callback)
+  - Examples: basic chains, agents with tools, LCEL pipelines, RAG, streaming
   - Production ready
+  - **Note:** POLICY_DECISION and STATE_UPDATE require app-level instrumentation
+  - **Note:** LangChain 1.x requires Python ≥3.10
 
 ### Changed
 

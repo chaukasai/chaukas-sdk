@@ -35,6 +35,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# MCP Protocol version for MCP tool calls
+MCP_PROTOCOL_VERSION = "1.0"
+
 
 class LangChainWrapper:
     """Wrapper for LangChain instrumentation using BaseCallbackHandler."""
@@ -276,6 +279,9 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
         self._tool_spans = {}  # Map tool run_id to span_id
         self._agent_spans = {}  # Map agent run_id to span_id
         self._retriever_spans = {}  # Map retriever run_id to span_id
+
+        # Track MCP tool run_ids for proper event type selection
+        self._mcp_runs: set = set()  # Set of run_id strings that are MCP calls
 
         # Track retry attempts
         self._llm_retry_attempts = {}
@@ -759,7 +765,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
         inputs: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Any:
-        """Run when tool starts. Maps to TOOL_CALL_START."""
+        """Run when tool starts. Maps to TOOL_CALL_START or MCP_CALL_START."""
         try:
             self._start_times[str(run_id)] = time.time()
 
@@ -782,15 +788,46 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
             # Get agent context
             agent_id, agent_name = self._get_current_agent_context()
 
-            tool_start = self.event_builder.create_tool_call_start(
-                tool_name=tool_name,
-                arguments=arguments,
-                call_id=str(run_id),
-                agent_id=agent_id,
-                agent_name=agent_name,
-            )
-            self.wrapper._send_event_sync(tool_start)
-            self._tool_spans[str(run_id)] = tool_start.span_id
+            # Check for MCP tool indicators in metadata
+            is_mcp = False
+            mcp_server_name = None
+            mcp_server_url = None
+
+            if metadata:
+                mcp_server_name = metadata.get("mcp_server") or metadata.get(
+                    "mcp_server_name"
+                )
+                mcp_server_url = metadata.get("mcp_server_url", "mcp://local")
+                is_mcp = mcp_server_name is not None
+
+            if is_mcp:
+                # Track this run_id as MCP for proper END event
+                self._mcp_runs.add(str(run_id))
+
+                # Emit MCP_CALL_START event
+                mcp_start = self.event_builder.create_mcp_call_start(
+                    server_name=mcp_server_name,
+                    server_url=mcp_server_url,
+                    operation="call_tool",
+                    method=tool_name,
+                    request=arguments,
+                    protocol_version=MCP_PROTOCOL_VERSION,
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                )
+                self.wrapper._send_event_sync(mcp_start)
+                self._tool_spans[str(run_id)] = mcp_start.span_id
+            else:
+                # Emit standard TOOL_CALL_START event
+                tool_start = self.event_builder.create_tool_call_start(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    call_id=str(run_id),
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                )
+                self.wrapper._send_event_sync(tool_start)
+                self._tool_spans[str(run_id)] = tool_start.span_id
 
         except Exception as e:
             logger.error(f"Error in on_tool_start: {e}", exc_info=True)
@@ -803,7 +840,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
         parent_run_id: Any = None,
         **kwargs: Any,
     ) -> Any:
-        """Run when tool ends. Maps to TOOL_CALL_END."""
+        """Run when tool ends. Maps to TOOL_CALL_END or MCP_CALL_END."""
         try:
             run_id_str = str(run_id)
             span_id = self._tool_spans.pop(run_id_str, None)
@@ -820,17 +857,40 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
             # Get agent context
             agent_id, agent_name = self._get_current_agent_context()
 
-            tool_end = self.event_builder.create_tool_call_end(
-                tool_name=kwargs.get("name", "unknown"),
-                call_id=run_id_str,
-                output=str(output)[:1000] if output else None,
-                error=None,
-                execution_time_ms=duration_ms,
-                span_id=span_id,
-                agent_id=agent_id,
-                agent_name=agent_name,
-            )
-            self.wrapper._send_event_sync(tool_end)
+            # Check if this was an MCP call
+            is_mcp = run_id_str in self._mcp_runs
+
+            if is_mcp:
+                # Remove from MCP tracking
+                self._mcp_runs.discard(run_id_str)
+
+                # Emit MCP_CALL_END event
+                mcp_end = self.event_builder.create_mcp_call_end(
+                    server_name=kwargs.get("mcp_server_name", "mcp_server"),
+                    server_url=kwargs.get("mcp_server_url", "mcp://local"),
+                    operation="call_tool",
+                    method=kwargs.get("name", "unknown"),
+                    response={"output": str(output)[:1000]} if output else {},
+                    execution_time_ms=duration_ms,
+                    error=None,
+                    span_id=span_id,
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                )
+                self.wrapper._send_event_sync(mcp_end)
+            else:
+                # Emit standard TOOL_CALL_END event
+                tool_end = self.event_builder.create_tool_call_end(
+                    tool_name=kwargs.get("name", "unknown"),
+                    call_id=run_id_str,
+                    output=str(output)[:1000] if output else None,
+                    error=None,
+                    execution_time_ms=duration_ms,
+                    span_id=span_id,
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                )
+                self.wrapper._send_event_sync(tool_end)
 
         except Exception as e:
             logger.error(f"Error in on_tool_end: {e}", exc_info=True)
@@ -843,7 +903,7 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
         parent_run_id: Any = None,
         **kwargs: Any,
     ) -> Any:
-        """Run when tool errors. Maps to ERROR + RETRY + TOOL_CALL_END."""
+        """Run when tool errors. Maps to ERROR + RETRY + TOOL_CALL_END or MCP_CALL_END."""
         try:
             run_id_str = str(run_id)
             span_id = self._tool_spans.pop(run_id_str, None)
@@ -877,18 +937,40 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
             )
             self.wrapper._send_event_sync(error_event)
 
-            # Emit TOOL_CALL_END with error
-            tool_end = self.event_builder.create_tool_call_end(
-                tool_name=kwargs.get("name", "unknown"),
-                call_id=run_id_str,
-                output=None,
-                error=error_msg,
-                execution_time_ms=None,
-                span_id=span_id,
-                agent_id=agent_id,
-                agent_name=agent_name,
-            )
-            self.wrapper._send_event_sync(tool_end)
+            # Check if this was an MCP call
+            is_mcp = run_id_str in self._mcp_runs
+
+            if is_mcp:
+                # Remove from MCP tracking
+                self._mcp_runs.discard(run_id_str)
+
+                # Emit MCP_CALL_END event with error
+                mcp_end = self.event_builder.create_mcp_call_end(
+                    server_name=kwargs.get("mcp_server_name", "mcp_server"),
+                    server_url=kwargs.get("mcp_server_url", "mcp://local"),
+                    operation="call_tool",
+                    method=kwargs.get("name", "unknown"),
+                    response={},
+                    execution_time_ms=None,
+                    error=error_msg,
+                    span_id=span_id,
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                )
+                self.wrapper._send_event_sync(mcp_end)
+            else:
+                # Emit TOOL_CALL_END with error
+                tool_end = self.event_builder.create_tool_call_end(
+                    tool_name=kwargs.get("name", "unknown"),
+                    call_id=run_id_str,
+                    output=None,
+                    error=error_msg,
+                    execution_time_ms=None,
+                    span_id=span_id,
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                )
+                self.wrapper._send_event_sync(tool_end)
 
             # Clean up
             if run_id_str in self._start_times:
@@ -909,14 +991,47 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
     ) -> Any:
         """
         Run on agent action.
-        Can emit AGENT_START if agent hasn't started yet.
+        Emits TOOL_CALL_START when agent selects a tool to use.
         """
         try:
             # Extract action details
             tool = action.tool if hasattr(action, "tool") else "unknown"
             tool_input = action.tool_input if hasattr(action, "tool_input") else {}
 
+            # Parse tool_input if it's a string
+            if isinstance(tool_input, str):
+                try:
+                    tool_input = (
+                        json.loads(tool_input)
+                        if tool_input.startswith("{")
+                        else {"input": tool_input}
+                    )
+                except (json.JSONDecodeError, ValueError):
+                    tool_input = {"input": tool_input}
+
             logger.debug(f"Agent action: tool={tool}, input={tool_input}")
+
+            # Get agent context
+            agent_id, agent_name = self._get_current_agent_context()
+
+            # Record start time for this action
+            action_run_id = f"agent_action_{run_id}_{tool}"
+            self._start_times[action_run_id] = time.time()
+
+            # Emit TOOL_CALL_START event for the agent's tool selection
+            tool_start = self.event_builder.create_tool_call_start(
+                tool_name=tool,
+                arguments=(
+                    tool_input
+                    if isinstance(tool_input, dict)
+                    else {"input": str(tool_input)}
+                ),
+                call_id=action_run_id,
+                agent_id=agent_id,
+                agent_name=agent_name,
+            )
+            self.wrapper._send_event_sync(tool_start)
+            self._tool_spans[action_run_id] = tool_start.span_id
 
         except Exception as e:
             logger.error(f"Error in on_agent_action: {e}", exc_info=True)
@@ -946,6 +1061,113 @@ class ChaukasCallbackHandler(BaseCallbackHandler):
 
         except Exception as e:
             logger.error(f"Error in on_agent_finish: {e}", exc_info=True)
+
+    # Text/streaming callbacks → OUTPUT_EMITTED events
+
+    def on_text(
+        self,
+        text: str,
+        *,
+        run_id: Any,
+        parent_run_id: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Run when text is emitted (streaming or intermediate output).
+        Maps to OUTPUT_EMITTED event for streaming text capture.
+        """
+        try:
+            # Skip empty text
+            if not text or not text.strip():
+                return
+
+            # Get agent context
+            agent_id, agent_name = self._get_current_agent_context()
+
+            # Emit OUTPUT_EMITTED event for streaming text
+            output_event = self.event_builder.create_output_emitted(
+                content=text[:1000],  # Truncate to prevent oversized events
+                target="stream",  # Indicate this is streaming output
+                agent_id=agent_id,
+                agent_name=agent_name,
+                metadata={
+                    "run_id": str(run_id),
+                    "parent_run_id": str(parent_run_id) if parent_run_id else None,
+                    "is_streaming": True,
+                },
+            )
+            self.wrapper._send_event_sync(output_event)
+
+        except Exception as e:
+            logger.error(f"Error in on_text: {e}", exc_info=True)
+
+    # Custom event callbacks → SYSTEM events
+
+    def on_custom_event(
+        self,
+        name: str,
+        data: Any,
+        *,
+        run_id: Any,
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Run when a custom event is emitted.
+        Maps to SYSTEM event for custom user-defined events.
+        """
+        try:
+            from chaukas.spec.common.v1.events_pb2 import Severity
+
+            # Get agent context
+            agent_id, agent_name = self._get_current_agent_context()
+
+            # Determine severity from metadata or default to INFO
+            severity = Severity.SEVERITY_INFO
+            if metadata and "severity" in metadata:
+                severity_str = metadata.get("severity", "info").lower()
+                severity_map = {
+                    "debug": Severity.SEVERITY_DEBUG,
+                    "info": Severity.SEVERITY_INFO,
+                    "warn": Severity.SEVERITY_WARN,
+                    "warning": Severity.SEVERITY_WARN,
+                    "error": Severity.SEVERITY_ERROR,
+                }
+                severity = severity_map.get(severity_str, Severity.SEVERITY_INFO)
+
+            # Build event metadata
+            event_metadata = {
+                "custom_event_name": name,
+                "run_id": str(run_id),
+                "tags": tags or [],
+            }
+
+            # Add custom data to metadata
+            if data is not None:
+                if isinstance(data, dict):
+                    event_metadata["data"] = data
+                else:
+                    event_metadata["data"] = str(data)[:1000]
+
+            # Merge with provided metadata (excluding severity which we already processed)
+            if metadata:
+                event_metadata.update(
+                    {k: v for k, v in metadata.items() if k != "severity"}
+                )
+
+            # Emit SYSTEM event
+            system_event = self.event_builder.create_system_event(
+                message=f"Custom event: {name}",
+                severity=severity,
+                metadata=event_metadata,
+                agent_id=agent_id,
+                agent_name=agent_name,
+            )
+            self.wrapper._send_event_sync(system_event)
+
+        except Exception as e:
+            logger.error(f"Error in on_custom_event: {e}", exc_info=True)
 
     # Retriever callbacks → DATA_ACCESS events
 
