@@ -255,9 +255,45 @@ class OpenAIAgentsWrapper:
                     if wrapper._session_active and wrapper._session_span_id:
                         wrapper._end_session_sync()
 
+            # Helper class to wrap RunResultStreaming for cleanup after streaming
+            class WrappedRunResultStreaming:
+                """Wraps RunResultStreaming to handle cleanup after streaming completes."""
+
+                def __init__(self, original_result, wrapper, starting_agent):
+                    self._original_result = original_result
+                    self._wrapper = wrapper
+                    self._starting_agent = starting_agent
+
+                def __getattr__(self, name):
+                    """Delegate all other attributes to the original result."""
+                    return getattr(self._original_result, name)
+
+                async def stream_events(self):
+                    """Wrapped stream_events that handles cleanup after streaming."""
+                    try:
+                        async for event in self._original_result.stream_events():
+                            yield event
+                    finally:
+                        # Send OUTPUT_EMITTED event for streamed response
+                        output_event = self._wrapper.event_builder.create_output_emitted(
+                            content="[Streamed response completed]",
+                            metadata={
+                                "method": "Runner.run_streamed",
+                                "agent": (
+                                    self._starting_agent.name
+                                    if hasattr(self._starting_agent, "name")
+                                    else None
+                                ),
+                            },
+                        )
+                        await self._wrapper.tracer.client.send_event(output_event)
+
+                        if self._wrapper._session_active and self._wrapper._session_span_id:
+                            await self._wrapper._end_session()
+
             # Patch streamed run method
             @functools.wraps(wrapper._original_runner_run_streamed)
-            async def instrumented_run_streamed(starting_agent, input=None, **kwargs):
+            def instrumented_run_streamed(starting_agent, input=None, **kwargs):
                 """Instrumented version of Runner.run_streamed()."""
                 # Handle both 'input' and 'input_data' parameter names
                 input_data = (
@@ -280,7 +316,7 @@ class OpenAIAgentsWrapper:
                         ),
                     },
                 )
-                await wrapper.tracer.client.send_event(input_event)
+                wrapper._send_event_sync(input_event)
 
                 # Inject our custom hooks
                 hooks = kwargs.get("hooks")
@@ -293,32 +329,19 @@ class OpenAIAgentsWrapper:
                     kwargs["hooks"] = custom_hooks
 
                 try:
-                    # Execute original method - returns an async generator
-                    async for chunk in wrapper._original_runner_run_streamed(
+                    # Execute original method - returns a RunResultStreaming object
+                    result = wrapper._original_runner_run_streamed(
                         starting_agent, input_data, **kwargs
-                    ):
-                        yield chunk
-
-                    # Send OUTPUT_EMITTED event for streamed response
-                    output_event = wrapper.event_builder.create_output_emitted(
-                        content="[Streamed response completed]",
-                        metadata={
-                            "method": "Runner.run_streamed",
-                            "agent": (
-                                starting_agent.name
-                                if hasattr(starting_agent, "name")
-                                else None
-                            ),
-                        },
                     )
-                    await wrapper.tracer.client.send_event(output_event)
+
+                    # Wrap the result to handle cleanup after streaming completes
+                    return WrappedRunResultStreaming(result, wrapper, starting_agent)
 
                 except Exception as e:
-                    await wrapper._handle_error(e, starting_agent)
-                    raise
-                finally:
+                    wrapper._handle_error_sync(e, starting_agent)
                     if wrapper._session_active and wrapper._session_span_id:
-                        await wrapper._end_session()
+                        wrapper._end_session_sync()
+                    raise
 
             # Apply patches
             Runner.run = instrumented_run
